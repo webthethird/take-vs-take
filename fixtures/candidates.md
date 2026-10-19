@@ -48,7 +48,7 @@ The post date is **not** a field: it is computed from the post ID and can't be w
 - b_url: https://x.com/oguzerkan/status/2077671967671357765?s=20
 - b_label: AI spending will keep accelerating
 - b_depends_on: chart image; long post, oEmbed truncates it
-- found_via:
+- found_via: (developer, X)
 - why: Broad but investable disagreement.
 - notes: Checked 2026-10-19: A is 2026-07-03, B is 2026-07-16, both after the model's training cutoff. B's text is narrower than its label: it argues a shift to cheaper models moves margins from AI labs to cloud providers (bullish for AI infrastructure). A argues the hyperscalers' AI returns are meager and masked by their other businesses. Both are about hyperscalers, reached from opposite directions.
 
@@ -56,57 +56,57 @@ The post date is **not** a field: it is computed from the post ID and can't be w
 
 - category: opposing
 - subject: Oil vs. renewables
-- a_url:
+- a_url: https://x.com/Electroversenet/status/2086905424452743230?s=20
 - a_label: Fossil fuels will dominate for decades
-- a_depends_on:
-- b_url:
+- a_depends_on: chart image; long post, oEmbed truncates it
+- b_url: https://x.com/Jason/status/2082206441717264739?s=20
 - b_label: Clean energy will displace them
-- b_depends_on:
+- b_depends_on: a t.co link (content unknown)
 - found_via:
 - why: Intuitively opposing economic exposures. Our first real-data check showed oil moving against the market in Oct 2025–Oct 2026, a good test of the co-movement explanation.
-- notes:
+- notes: Checked 2026-10-19: A 2026-08-10, B 2026-07-28, both after the training cutoff. A is a data-backed claim; B is more enthusiasm than argument (the weaker side).
 
 ## pair-03
 
-- category: related
-- subject: Nvidia vs. AMD
-- a_url:
+- category: opposing
+- subject: Nvidia's moat
+- a_url: https://x.com/MilkRoadAI/status/2085115395850264656?s=20
 - a_label: Nvidia's moat will persist
-- a_depends_on:
-- b_url:
-- b_label: AMD will take significant share
-- b_depends_on:
+- a_depends_on: chart image (key numbers restated in the text); ends with a paid-newsletter promotion
+- b_url: https://x.com/tokenbender/status/2079284390451147148?s=20
+- b_label: Nvidia's moat is eroding (AMD, Huawei)
+- b_depends_on: none; long post, oEmbed truncates it
 - found_via:
-- why: Different holdings, potentially similar exposures. Tests holdings overlap vs. co-movement.
-- notes:
+- why: Directly opposing views on Nvidia's moat. Bearish side tests long-only translation (Huawei isn't US-listed).
+- notes: Recategorized related -> opposing on 2026-10-19, before any analysis: the replacement A makes this a direct disagreement. Original A (@tunguz) rejected; see log. A 2026-08-05, B 2026-07-20.
 
 ## pair-04
 
 - category: opposing
 - subject: Tesla vs. traditional automakers
-- a_url:
-- a_label: Tesla's valuation is justified
-- a_depends_on:
-- b_url:
-- b_label: Legacy manufacturers are undervalued
-- b_depends_on:
-- found_via:
+- a_url: https://x.com/niccruzpatane/status/2090599312312922214?s=20
+- a_label: You cannot be bullish enough on Tesla (and SpaceX)
+- a_depends_on: chart image + link
+- b_url: https://x.com/CoinvoTrading/status/2081439407190474806?s=20
+- b_label: Tesla is overvalued; Chinese robotaxis will win
+- b_depends_on: image; oEmbed truncates it
+- found_via: B: X search for Tesla-bear posts in the poster's own voice
 - why: Two interpretations of automotive disruption. A bearish-on-Tesla reading tests long-only translation (Supertake's own builder turned "Tesla is overvalued" into long rivals, including NVDA and GOOGL).
-- notes:
+- notes: B replaced and relabeled 2026-10-19, before any analysis (was 'Legacy manufacturers are undervalued'; no own-voice legacy-auto bull found). A 2026-08-21, B 2026-07-26. A includes SpaceX, which may not be investable. B's figures are the author's assertions, not checked. B is clickbait in tone but makes two substantive arguments.
 
 ## pair-05
 
 - category: opposing
 - subject: Software and AI
-- a_url:
+- a_url: https://x.com/yongfook/status/2091794287310815593?s=20
 - a_label: AI will destroy SaaS margins
-- a_depends_on:
-- b_url:
+- a_depends_on: none
+- b_url: https://x.com/KyleReidhead/status/2088974078862619075?s=20
 - b_label: AI will expand SaaS profitability
-- b_depends_on:
+- b_depends_on: chart image + link; last third is a paid-newsletter promotion and a holdings disclosure
 - found_via:
 - why: Competing theses with potentially surprising portfolio overlap.
-- notes:
+- notes: Checked 2026-10-19: A 2026-08-24, B 2026-08-16. A says AI doesn't replace CRM; B names Salesforce and ServiceNow, so overlapping holdings from opposite views are possible. B's promotion stays in the text (verbatim rule); don't feature B in a public demo without deciding that separately.
 
 ## pair-06
 
@@ -136,6 +136,20 @@ The post date is **not** a field: it is computed from the post ID and can't be w
 - why: The system must abstain on the uninvestable side instead of inventing tickers.
 - notes:
 
+## pair-08
+
+- category: related
+- subject: (open) compatible theses, similar exposures
+- a_url:
+- a_label: e.g. AI chip demand will keep growing
+- a_depends_on:
+- b_url:
+- b_label: e.g. AMD will gain share
+- b_depends_on:
+- found_via:
+- why: Replaces the related slot pair-03 used to fill. Tests different holdings with potentially similar exposures, and claims that can both be true.
+- notes:
+
 ---
 
 ## Rejected candidates
@@ -144,3 +158,5 @@ Pairs considered and dropped, and why. Keep these: they document the selection.
 
 | Date | Subject | URLs | Reason |
 | --- | --- | --- | --- |
+| 2026-10-19 | Nvidia's moat (pair-03 A) | https://x.com/tunguz/status/2070324208702464005 | Posted 2026-06-26, before the model's training cutoff; a reply ("way dumber than that") whose meaning depends on an unseen post; doesn't say what the moat is. |
+| 2026-10-19 | Tesla vs. legacy (pair-04 B) | https://x.com/DeItaone/status/2081661171631874354 | A news headline relaying Jefferies' upgrade of GM, not the poster's own opinion; interpreting it would misattribute the thesis. |
