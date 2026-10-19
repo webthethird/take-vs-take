@@ -189,3 +189,32 @@ describe("tiingoSource: limits and input", () => {
     assert.throws(() => tiingoSource({ token: "" }), /TIINGO_API_TOKEN/);
   });
 });
+
+describe("tiingoSource: shared quota log", () => {
+  it("refuses locally once the hourly limit is reached, with a retry-after time", async () => {
+    const { mkdtemp, rm, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = await mkdtemp(join(tmpdir(), "tvt-quota-"));
+    try {
+      const log = join(dir, "req.log");
+      // Two requests 59 and 61 minutes ago: only the first counts.
+      await writeFile(log, "2026-10-19T11:01:00.000Z\n2026-10-19T10:59:00.000Z\n");
+      const { s, calls } = src([json([]), json([])], { requestLog: log, hourlyLimit: 2 });
+      assert.ok((await s.daily("SPY", "2026-09-25", "2026-09-28")).ok); // 2nd in the hour
+      const r = await s.daily("QQQ", "2026-09-25", "2026-09-28");
+      assert.equal(r.ok, false);
+      if (!r.ok) {
+        assert.equal(r.error, "rate_limited");
+        assert.match(r.message, /Retry after 2026-10-19T12:01:00\.000Z/);
+      }
+      assert.equal(calls.length, 1);
+      // A second source sharing the log sees the same count.
+      const other = src([json([])], { requestLog: log, hourlyLimit: 2 });
+      assert.equal((await other.s.daily("IWM", "2026-09-25", "2026-09-28")).ok, false);
+      assert.equal(other.calls.length, 0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

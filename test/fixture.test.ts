@@ -66,3 +66,16 @@ describe("fixtureToPostInput", () => {
     if (!r.ok) assert.equal(r.error, "no_timestamp");
   });
 });
+
+describe("toThesisInput", () => {
+  it("passes text, date, context and attachments; drops author, URL and provenance", async () => {
+    const { toThesisInput } = await import("../src/lib/fixture.js");
+    const r = fixtureToPostInput({ ...base, attachments: ["image", "link"] }, NOW);
+    assert.ok(r.ok);
+    if (!r.ok) return;
+    const t = toThesisInput(r.value);
+    assert.deepEqual(Object.keys(t).sort(), ["attachments", "context", "created_at", "synthetic", "text"]);
+    assert.deepEqual(t.attachments, ["image", "link"]);
+    assert.doesNotMatch(JSON.stringify(t), /mignano|Mignano|x\.com/);
+  });
+});

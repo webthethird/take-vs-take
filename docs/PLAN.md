@@ -245,8 +245,8 @@ show, and the comparison should point them out rather than smooth them over.
 
 An LLM label on the two *theses*: opposing / partly conflicting / compatible
 / similar / unrelated / unknown, with a short source-grounded explanation.
-- It runs only after both portfolios are frozen. It sees both posts and both frozen portfolios, never price outcomes.
-- Labels are provisional, and their schema is defined at step 7.
+- It runs only after both portfolios are frozen. It sees both posts and their analyses, but **not the portfolios** and never prices. *Revised 2026-10-19:* seeing the holdings could pull the label toward the holdings, and then a mismatch between thesis alignment and co-movement would no longer be independent evidence.
+- Labels are provisional (schema: `ThesisAlignment`).
 - It never cites ρ as evidence for or against agreement.
 
 ### 5.2 Portfolio co-movement
@@ -402,4 +402,5 @@ network access, and an uninvestable fixture produces no portfolio.
 9. Whether the Fisher interval needs a correction for autocorrelated or heteroskedastic returns (e.g. a block bootstrap) before public use.
 10. **Default interpretation breadth.** The prompt asks for the broadest reading that covers the main claim; on the bearish synthetic post the model chose a narrower one ("money-center banks" over a mix). Supertake's "Build it now" chose the mix. Evaluate on real pairs before tuning.
 11. **ETF look-through for holdings overlap.** A draft can hold both ITB and its constituents (DHI, LEN, PHM); across sides, ITB vs. DHI counts as zero overlap. Co-movement captures it; holdings overlap doesn't.
+13. **Presentation of combined findings.** On the first real pair, "opinions conflict but portfolios move together" and "together raw, apart beyond the market" are both true and read as contradictory side by side; the second explains the first. The report should present them as one story.
 12. **Tiingo's hourly limit** (50/hour on the free tier) is the throughput bottleneck: a draft checks every ticker (6–11 requests so far), and the backtest window needs another request per ticker. Throttle or pace before running the self-consistency baseline.

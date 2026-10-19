@@ -26,6 +26,8 @@ export const PostInput = z.object({
   /// Always derived from the snowflake ID, never from user input.
   created_at: z.iso.datetime(),
   context: z.array(PostContext).default([]),
+  /// Media or links in the post that the text doesn't capture.
+  attachments: z.array(z.enum(["image", "video", "link"])).default([]),
   provenance: z.object({
     source: PostSource,
     /// True only when the full text came from an authoritative fetch. A
@@ -50,6 +52,7 @@ export const ManualFixture = z.object({
   /// timestamp; a mismatch means the text was copied from a different post.
   created_at: z.iso.datetime({ offset: true }).optional(),
   context: z.array(PostContext).default([]),
+  attachments: z.array(z.enum(["image", "video", "link"])).default([]),
   retrieved_at: z.iso.datetime({ offset: true }),
   note: z.string().optional(),
 });

@@ -6,7 +6,7 @@
 
 import { readFile } from "node:fs/promises";
 import { parsePostUrl, snowflakeTimestamp, type Result } from "./post-url.js";
-import { ManualFixture, PostInput } from "./schema.js";
+import { ManualFixture, PostInput, ThesisInput } from "./schema.js";
 
 /// Manual created_at values come from the X UI, which shows minutes in local
 /// time. A minute of tolerance accepts that precision and nothing looser.
@@ -64,6 +64,7 @@ export function fixtureToPostInput(
     text: f.text,
     created_at: ts.value.toISOString(),
     context: f.context,
+    attachments: f.attachments,
     provenance: {
       source: "fixture_manual",
       text_verified: false,
@@ -72,6 +73,18 @@ export function fixtureToPostInput(
     },
   });
   return { ok: true, value: post };
+}
+
+/// What the interpretation model may see: text, date, context, attachments.
+/// Author, URL and provenance stay behind.
+export function toThesisInput(post: PostInput): ThesisInput {
+  return ThesisInput.parse({
+    text: post.text,
+    created_at: post.created_at,
+    context: post.context.map((c) => ({ kind: c.kind, text: c.text })),
+    attachments: post.attachments,
+    synthetic: false,
+  });
 }
 
 export async function loadFixture(path: string): Promise<Result<PostInput, FixtureError>> {

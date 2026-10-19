@@ -10,3 +10,6 @@ node_modules/
 .cache/
 dist/
 .next/
+
+# Real post text: kept out of git until X storage/display terms are checked
+fixtures/private/
