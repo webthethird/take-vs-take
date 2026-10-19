@@ -214,7 +214,11 @@ export async function analyzeThesis(
 
 // ── Draft ────────────────────────────────────────────────────────────────
 
-export type TickerCheck = (tickers: string[]) => Promise<{ ticker: string; problem: string | null }[]>;
+/// `problem` is the model's to fix (unknown or stale ticker). `unavailable`
+/// means we couldn't check (quota, network): that is never the model's
+/// fault, so it must not be sent back as "replace this ticker", which would
+/// spend money and bias the draft away from valid tickers.
+export type TickerCheck = (tickers: string[]) => Promise<{ ticker: string; problem: string | null; unavailable?: string }[]>;
 
 /// A ticker is valid if it has prices in the 10 calendar days before the post
 /// (i.e. it was trading then). Reads only pre-post data, so it's safe to run
@@ -228,12 +232,18 @@ export function priceTickerCheck(source: PriceSource, asOf: Date): TickerCheck {
   const end = shift(day, -1);
   const recent = shift(day, -10);
   return async (tickers) => {
-    const out: { ticker: string; problem: string | null }[] = [];
+    const out: Awaited<ReturnType<TickerCheck>> = [];
     // Sequential on purpose: the price provider is rate-limited.
     for (const t of [...new Set(tickers.map(tickerKey))]) {
       const r = await source.daily(t, start, end);
-      if (!r.ok) {
-        out.push({ ticker: t, problem: r.error === "not_found" ? "no price data (unknown ticker, or delisted)" : `price check failed: ${r.message}` });
+      if (!r.ok && r.error === "not_found") {
+        out.push({ ticker: t, problem: "no price data (unknown ticker, or delisted)" });
+      } else if (!r.ok && r.error === "invalid_request") {
+        out.push({ ticker: t, problem: `not a valid ticker: ${r.message}` });
+      } else if (!r.ok) {
+        // Stop: further requests would fail the same way and spend quota.
+        out.push({ ticker: t, problem: null, unavailable: `${r.error}: ${r.message}` });
+        break;
       } else if (!r.value.bars.some((b) => b.date >= recent)) {
         out.push({ ticker: t, problem: `not trading in the 10 days before ${day}` });
       } else {
@@ -253,7 +263,7 @@ export async function draftPortfolio(
   interpretationId: string,
   checkTickers: TickerCheck,
   opts: { nonce?: string } = {},
-): Promise<Result<DraftRun, RepairError | "invalid_request"> & { attempts: Attempt[] }> {
+): Promise<Result<DraftRun, RepairError | "invalid_request" | "ticker_check_unavailable"> & { attempts: Attempt[] }> {
   const interp = analysis.interpretations.find((i) => i.id === interpretationId);
   if (analysis.status !== "investable" || !interp) {
     return { ...err("invalid_request", `No investable interpretation "${interpretationId}" to draft.`), attempts: [] };
@@ -266,6 +276,7 @@ export async function draftPortfolio(
   ].join("\n\n");
 
   let weighted: Portfolio | null = null;
+  let unavailable: string | null = null;
   const r = await callWithRepair(
     cfg,
     { promptVersion: DRAFT_PROMPT_VERSION, system: DRAFT_SYSTEM, schema: PortfolioDraft, nonce: opts.nonce },
@@ -277,6 +288,11 @@ export async function draftPortfolio(
       const w = weightPortfolio(draft);
       if (!w.ok) problems.push(w.message);
       for (const c of await checkTickers(draft.positions.map((p) => p.ticker))) {
+        if (c.unavailable) {
+          unavailable = `Ticker check for ${c.ticker} failed (${c.unavailable}); rerun later. The model's answer is cached.`;
+          weighted = null;
+          return []; // end the loop without a repair turn
+        }
         if (c.problem) problems.push(`${c.ticker}: ${c.problem}. Replace it.`);
       }
       weighted = w.ok && problems.length === 0 ? w.value : null;
@@ -284,6 +300,7 @@ export async function draftPortfolio(
     },
   );
   if (!r.ok) return r;
+  if (unavailable) return { ...err("ticker_check_unavailable", unavailable), attempts: r.attempts };
   return {
     ok: true,
     value: { draft: { ...r.value.value, interpretation_id: interpretationId }, portfolio: weighted!, attempts: r.value.attempts },

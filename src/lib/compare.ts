@@ -173,10 +173,24 @@ const shift = (d: string, days: number) => new Date(Date.parse(`${d}T12:00:00Z`)
 
 // ── Pipeline ─────────────────────────────────────────────────────────────
 
-async function buildSide(deps: CompareDeps, gate: LookAheadGate, label: "A" | "B", post: PostInput): Promise<Result<Side, CompareError>> {
+/// A failed side keeps the underlying error code (`cause`), so callers can
+/// tell a model failure from an infrastructure one, and the attempts, so
+/// their cost is still reported.
+export type SideResult =
+  | { ok: true; value: Side }
+  | { ok: false; error: CompareError; message: string; cause: string; attempts: Attempt[] };
+
+export async function buildSide(
+  deps: CompareDeps,
+  gate: LookAheadGate,
+  label: "A" | "B",
+  post: PostInput,
+  opts: { nonce?: string } = {},
+): Promise<SideResult> {
   const input = toThesisInput(post);
-  const a = await analyzeThesis(deps.llm, input);
-  if (!a.ok) return err("analysis_failed", `Side ${label}: ${a.error}: ${a.message}`);
+  const nonce = opts.nonce;
+  const a = await analyzeThesis(deps.llm, input, { nonce });
+  if (!a.ok) return { ...err("analysis_failed", `Side ${label}: ${a.error}: ${a.message}`), cause: a.error, attempts: a.attempts };
   const analysis = a.value.analysis;
   const keep = { post_id: post.post_id, url: post.url, author_handle: post.author_handle, created_at: post.created_at, attachments: post.attachments, provenance: post.provenance };
   if (analysis.status !== "investable" || !analysis.default_interpretation) {
@@ -184,8 +198,8 @@ async function buildSide(deps: CompareDeps, gate: LookAheadGate, label: "A" | "B
   }
   const asOf = new Date(post.created_at);
   const check = priceTickerCheck(gate, asOf);
-  const d = await draftPortfolio(deps.llm, input, analysis, analysis.default_interpretation, check);
-  if (!d.ok) return err("draft_failed", `Side ${label}: ${d.error}: ${d.message}`);
+  const d = await draftPortfolio(deps.llm, input, analysis, analysis.default_interpretation, check, { nonce });
+  if (!d.ok) return { ...err("draft_failed", `Side ${label}: ${d.error}: ${d.message}`), cause: d.error, attempts: [...a.attempts, ...d.attempts] };
   const attempts = [...a.attempts, ...d.attempts];
 
   // Every other reading, drafted now, so all are frozen together.
@@ -193,7 +207,7 @@ async function buildSide(deps: CompareDeps, gate: LookAheadGate, label: "A" | "B
   if (deps.alternates ?? true) {
     for (const i of analysis.interpretations) {
       if (i.id === analysis.default_interpretation) continue;
-      const x = await draftPortfolio(deps.llm, input, analysis, i.id, check);
+      const x = await draftPortfolio(deps.llm, input, analysis, i.id, check, { nonce });
       attempts.push(...x.attempts);
       alternates.push(x.ok ? { interpretation_id: i.id, portfolio: x.value.portfolio, error: null } : { interpretation_id: i.id, portfolio: null, error: `${x.error}: ${x.message}` });
     }
@@ -201,7 +215,7 @@ async function buildSide(deps: CompareDeps, gate: LookAheadGate, label: "A" | "B
   return { ok: true, value: { label, post: keep, analysis, portfolio: d.value.portfolio, alternates, attempts } };
 }
 
-function freeze(side: Side, now: Date): FrozenRun {
+export function freeze(side: Side, now: Date): FrozenRun {
   const versions = {
     analyze: ANALYZE_PROMPT_VERSION,
     draft: DRAFT_PROMPT_VERSION,
@@ -225,7 +239,7 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
   const sides: Side[] = [];
   for (const [label, post] of [["A", postA], ["B", postB]] as const) {
     const s = await buildSide(deps, gate, label, post);
-    if (!s.ok) return s;
+    if (!s.ok) return err(s.error, s.message);
     sides.push(s.value);
   }
 

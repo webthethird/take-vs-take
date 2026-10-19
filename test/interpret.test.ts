@@ -13,7 +13,8 @@ import {
   type TickerCheck,
 } from "../src/lib/interpret.js";
 import type { LlmConfig } from "../src/lib/llm.js";
-import { LookAheadGate, fixtureSource, type PriceBar } from "../src/lib/prices.js";
+import { LookAheadGate, fixtureSource, type PriceBar, type PriceSource } from "../src/lib/prices.js";
+import { err } from "../src/lib/result.js";
 import { ThesisInput, type PortfolioDraft, type ThesisAnalysis } from "../src/lib/schema.js";
 import { scripted } from "./llm.test.js";
 
@@ -170,6 +171,19 @@ describe("draftPortfolio", () => {
     assert.match(JSON.stringify(t.requests[1]!.messages.at(-1)), /FAKE: no price data/);
   });
 
+  it("an unavailable check (quota, network) ends the draft without a repair turn", async () => {
+    const check: TickerCheck = async (ts) => ts.map((ticker) => ({ ticker, problem: null, unavailable: ticker === "CSX" ? "rate_limited: quota" : undefined }));
+    const { cfg, t } = await cfgWith([draft([["UNP", "core"], ["CSX", "core"], ["NSC", "core"], ["CP", "core"]])]);
+    const r = await draftPortfolio(cfg, input, goodAnalysis, "i1", check);
+    assert.equal(r.ok, false);
+    if (!r.ok) {
+      assert.equal(r.error, "ticker_check_unavailable");
+      assert.match(r.message, /CSX.*rate_limited/);
+    }
+    assert.equal(t.requests.length, 1); // the model was never told to replace CSX
+    assert.equal(r.attempts.length, 1); // its cost is still reported
+  });
+
   it("won't draft for an abstaining analysis or an unknown interpretation", async () => {
     const { cfg, t } = await cfgWith([]);
     const abstain = { ...goodAnalysis, status: "not_investable" as const };
@@ -206,6 +220,30 @@ describe("priceTickerCheck", () => {
       r.map((x) => [x.ticker, x.problem === null]),
       [["UNP", true], ["OLD", false], ["NOPE", false]],
     );
+  });
+
+  it("reports quota and network failures as unavailable, not as bad tickers, and stops", async () => {
+    const calls: string[] = [];
+    const flaky: PriceSource = {
+      name: "flaky",
+      async daily(ticker) {
+        calls.push(ticker);
+        return ticker === "UNP" ? fixtureSource({ UNP: live }).daily("UNP", "2025-06-05", "2026-07-09") : err("rate_limited", "quota");
+      },
+    };
+    const r = await priceTickerCheck(flaky, post)(["UNP", "CSX", "NSC"]);
+    assert.deepEqual(r, [
+      { ticker: "UNP", problem: null },
+      { ticker: "CSX", problem: null, unavailable: "rate_limited: quota" },
+    ]);
+    assert.deepEqual(calls, ["UNP", "CSX"]);
+  });
+
+  it("a malformed ticker is the model's to fix, not an outage", async () => {
+    const strict: PriceSource = { name: "strict", daily: async () => err("invalid_request", "bad ticker") };
+    const r = await priceTickerCheck(strict, post)(["BRK B"]);
+    assert.equal(r[0]!.unavailable, undefined);
+    assert.match(r[0]!.problem!, /not a valid ticker/);
   });
 
   it("works through the LookAheadGate before anything is frozen", async () => {
