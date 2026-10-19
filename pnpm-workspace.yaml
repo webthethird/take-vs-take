@@ -1,0 +1,5 @@
+# Build-script approvals. pnpm 11 treats an unapproved dependency build script
+# as a hard install error, and runs that check before every `pnpm <script>`.
+#   esbuild — tsx's bundler; links the platform binary
+allowBuilds:
+  esbuild: true

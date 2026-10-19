@@ -1,0 +1,19 @@
+{
+  "name": "take-vs-take",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Two X posts in, two hypothetical portfolios out, compared fairly over a common window.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test 'test/**/*.test.ts'"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
