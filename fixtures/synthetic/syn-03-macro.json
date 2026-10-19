@@ -1,0 +1,13 @@
+{
+  "id": "syn-03-macro",
+  "synthetic_note": "SYNTHETIC: written for development; not a real post and must never be presented as one.",
+  "expect_status": "investable",
+  "why": "Macro thesis where the author names what to own.",
+  "input": {
+    "text": "Rate cuts are coming faster than the market expects. Long-duration growth stocks and homebuilders are the place to be before that gets priced in.",
+    "created_at": "2026-08-04T18:05:00Z",
+    "context": [],
+    "attachments": [],
+    "synthetic": true
+  }
+}

@@ -90,3 +90,69 @@ export const PortfolioDraft = z.object({
   positions: z.array(DraftPosition),
 });
 export type PortfolioDraft = z.infer<typeof PortfolioDraft>;
+
+// ── Thesis interpretation (LLM input/output) ─────────────────────────────
+
+/// Everything the interpretation model sees about one post. Deliberately has
+/// no author field: withholding identity is enforced by the type, not by
+/// remembering to leave it out of a prompt (an author's name invites recall of
+/// their later positions).
+export const ThesisInput = z.object({
+  text: z.string().min(1),
+  created_at: z.iso.datetime(),
+  context: z.array(z.object({ kind: z.enum(["parent", "quoted"]), text: z.string() })).default([]),
+  /// Media or links the post includes but the model can't see.
+  attachments: z.array(z.enum(["image", "video", "link"])).default([]),
+  /// True for hand-written development posts, never shown as real.
+  synthetic: z.boolean().default(false),
+});
+export type ThesisInput = z.infer<typeof ThesisInput>;
+
+export const ThesisStatus = z.enum(["investable", "not_investable", "insufficient_context"]);
+export type ThesisStatus = z.infer<typeof ThesisStatus>;
+
+// Field order is load-bearing: structured output is generated in schema
+// order, so evidence and reasoning come before the status verdict.
+export const ThesisAnalysis = z.object({
+  evidence: z
+    .array(z.string())
+    .describe("Verbatim quotes from the post that carry its claim. Copy exactly; never paraphrase. Empty if there is no claim."),
+  economic_claim: z.string().describe("What the post claims, in plain words, without adding anything the post doesn't say."),
+  direction: z.enum(["bullish", "bearish", "mixed", "descriptive", "unclear"]),
+  subjects: z.array(z.string()).describe("Companies, sectors, asset classes or macro factors the claim is about."),
+  horizon: z.string().nullable().describe("Time horizon only if the post states or clearly implies one; otherwise null."),
+  missing: z.array(z.string()).describe("What the post leaves unspecified that an investor would need to know."),
+  interpretations: z
+    .array(
+      z.object({
+        id: z.string().describe("Short id: i1, i2, i3."),
+        label: z.string().describe("A few words, e.g. 'Cheap stocks AI left behind'."),
+        expression: z.string().describe("How this reading becomes long-only positions."),
+        author_stated: z.boolean().describe("True only if the post itself names what to own (or clearly implies it). False when the beneficiaries are inferred."),
+        gap_note: z.string().describe("What this reading adds beyond what the post says."),
+      }),
+    )
+    .describe("1 to 3 distinct readings if investable; empty otherwise."),
+  default_interpretation: z
+    .string()
+    .nullable()
+    .describe("Id of the reading to build by default: the broadest one that covers the post's main claim. Null if not investable."),
+  status: ThesisStatus,
+  status_reason: z.string().describe("One or two sentences explaining the status."),
+});
+export type ThesisAnalysis = z.infer<typeof ThesisAnalysis>;
+
+// ── Thesis alignment (LLM, after both portfolios are frozen) ─────────────
+//
+// About the opinions, not the portfolios. Must not cite correlation or
+// returns; see docs/PLAN.md §5.1. Used at step 8.
+
+export const ThesisAlignment = z.object({
+  a_claim: z.string(),
+  b_claim: z.string(),
+  shared_subjects: z.array(z.string()),
+  reasoning: z.string().describe("How the two claims bear on each other, grounded in what each post says."),
+  relationship: z.enum(["opposing", "partly_conflicting", "compatible", "similar", "unrelated", "unknown"]),
+  confidence: z.enum(["low", "medium", "high"]),
+});
+export type ThesisAlignment = z.infer<typeof ThesisAlignment>;

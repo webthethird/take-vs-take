@@ -1,0 +1,215 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, describe, it } from "node:test";
+import {
+  DRAFT_SYSTEM,
+  MAX_REPAIRS,
+  analysisProblems,
+  analyzeThesis,
+  draftPortfolio,
+  priceTickerCheck,
+  type TickerCheck,
+} from "../src/lib/interpret.js";
+import type { LlmConfig } from "../src/lib/llm.js";
+import { LookAheadGate, fixtureSource, type PriceBar } from "../src/lib/prices.js";
+import { ThesisInput, type PortfolioDraft, type ThesisAnalysis } from "../src/lib/schema.js";
+import { scripted } from "./llm.test.js";
+
+const input = ThesisInput.parse({
+  text: "Rail freight is the cheapest way to play the reshoring boom. Buy the railroads.",
+  created_at: "2026-07-10T14:00:00Z",
+  synthetic: true,
+});
+
+const goodAnalysis: ThesisAnalysis = {
+  evidence: ["Rail freight is the cheapest way to play the reshoring boom", "Buy the railroads."],
+  economic_claim: "Reshoring will raise US freight volumes, and railroads are an undervalued way to own that.",
+  direction: "bullish",
+  subjects: ["US railroads", "reshoring"],
+  horizon: null,
+  missing: ["which railroads", "time horizon"],
+  interpretations: [{ id: "i1", label: "US Class I railroads", expression: "Own the major US railroads.", author_stated: true, gap_note: "Picks specific railroads." }],
+  default_interpretation: "i1",
+  status: "investable",
+  status_reason: "A clear bullish claim on an investable sector.",
+};
+
+const draft = (positions: [string, "core" | "supporting" | "satellite"][], extra: Partial<PortfolioDraft> = {}): PortfolioDraft => ({
+  interpretation_id: "whatever-the-model-said",
+  title: "Reshoring Rails",
+  long_only_note: "",
+  exclusions: [],
+  concentration: "concentrated",
+  cash_level: "standard",
+  cash_reason: "buffer",
+  buckets: [{ name: "Rail", rationale: "" }],
+  positions: positions.map(([ticker, tier]) => ({ ticker, tier, role: "railroad", bucket: "Rail", rationale: "" })),
+  ...extra,
+});
+
+const dirs: string[] = [];
+after(async () => {
+  for (const d of dirs) await rm(d, { recursive: true, force: true });
+});
+async function cfgWith(responses: unknown[]) {
+  const t = scripted(responses.map((parsed) => ({ parsed })));
+  const d = await mkdtemp(join(tmpdir(), "tvt-int-"));
+  dirs.push(d);
+  const cfg: LlmConfig = { transport: t, budgetUsd: 5, cacheDir: join(d, "c"), ledgerPath: join(d, "l.jsonl") };
+  return { cfg, t };
+}
+
+const allValid: TickerCheck = async (ts) => ts.map((ticker) => ({ ticker, problem: null }));
+
+describe("analysisProblems", () => {
+  it("accepts verbatim evidence, tolerating quote and whitespace variants", () => {
+    const curly = ThesisInput.parse({ ...input, text: "It’s   the “cheapest” way." });
+    assert.deepEqual(analysisProblems({ ...goodAnalysis, evidence: ["It's the \"cheapest\" way."] }, curly), []);
+  });
+
+  it("flags paraphrased evidence", () => {
+    const p = analysisProblems({ ...goodAnalysis, evidence: ["Railroads are the cheapest reshoring play"] }, input);
+    assert.match(p.join(), /not a verbatim quote/);
+  });
+
+  it("enforces interpretation rules for investable posts", () => {
+    assert.match(analysisProblems({ ...goodAnalysis, interpretations: [] }, input).join(), /1 to 3/);
+    assert.match(analysisProblems({ ...goodAnalysis, default_interpretation: "i9" }, input).join(), /default_interpretation/);
+    const dup = { ...goodAnalysis, interpretations: [goodAnalysis.interpretations[0]!, goodAnalysis.interpretations[0]!] };
+    assert.match(analysisProblems(dup, input).join(), /unique/);
+  });
+
+  it("an abstaining post may not carry interpretations", () => {
+    const p = analysisProblems({ ...goodAnalysis, status: "not_investable", evidence: [] }, input);
+    assert.match(p.join(), /must have no interpretations/);
+    assert.match(p.join(), /null default_interpretation/);
+  });
+});
+
+describe("analyzeThesis", () => {
+  it("passes the post date and text, and nothing about the author", async () => {
+    const { cfg, t } = await cfgWith([goodAnalysis]);
+    const r = await analyzeThesis(cfg, input);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    const sent = JSON.stringify(t.requests[0]!.messages);
+    assert.match(sent, /2026-07-10/);
+    assert.match(sent, /Buy the railroads/);
+    // ThesisInput has no author field, so there is nothing to leak; guard the
+    // prompt text too.
+    assert.doesNotMatch(t.requests[0]!.system + sent, /author_handle|@[A-Za-z0-9_]+/);
+  });
+
+  it("repairs a rejected answer in an append-only follow-up", async () => {
+    const bad = { ...goodAnalysis, evidence: ["a paraphrase that isn't in the post"] };
+    const { cfg, t } = await cfgWith([bad, goodAnalysis]);
+    const r = await analyzeThesis(cfg, input);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    assert.equal(r.attempts.length, 2);
+    assert.equal(r.attempts[0]!.problems.length, 1);
+    const second = t.requests[1]!.messages;
+    assert.equal(second.length, 3);
+    assert.equal(second[1]!.role, "assistant");
+    assert.match(JSON.stringify(second[2]), /not a verbatim quote/);
+    // The first turn is unchanged in the follow-up.
+    assert.deepEqual(second[0], t.requests[0]!.messages[0]);
+  });
+
+  it(`fails visibly after ${MAX_REPAIRS} repairs`, async () => {
+    const bad = { ...goodAnalysis, evidence: ["never in the post"] };
+    const { cfg, t } = await cfgWith([bad, bad, bad, bad]);
+    const r = await analyzeThesis(cfg, input);
+    assert.ok(!r.ok && r.error === "invalid_after_repair");
+    assert.equal(t.requests.length, MAX_REPAIRS + 1);
+    assert.equal(r.attempts.length, MAX_REPAIRS + 1);
+  });
+
+  it("returns an abstention as a result, not an error", async () => {
+    const abstain: ThesisAnalysis = { ...goodAnalysis, evidence: [], interpretations: [], default_interpretation: null, status: "not_investable", status_reason: "A joke." };
+    const { cfg } = await cfgWith([abstain]);
+    const r = await analyzeThesis(cfg, input);
+    assert.ok(r.ok);
+    if (r.ok) assert.equal(r.value.analysis.status, "not_investable");
+  });
+});
+
+describe("draftPortfolio", () => {
+  it("weights an accepted draft and sets the interpretation id itself", async () => {
+    // 90% over 3+3+2+2+1+1 = 12 points: core 22.5, supporting 15, satellite 7.5.
+    const d = draft([["UNP", "core"], ["CSX", "core"], ["NSC", "supporting"], ["CP", "supporting"], ["CNI", "satellite"], ["WAB", "satellite"]]);
+    const { cfg, t } = await cfgWith([d]);
+    const r = await draftPortfolio(cfg, input, goodAnalysis, "i1", allValid);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    if (!r.ok) return;
+    assert.equal(t.requests.length, 1);
+    assert.equal(r.value.draft.interpretation_id, "i1");
+    assert.equal(r.value.portfolio.interpretation_id, "i1");
+    assert.equal(r.value.portfolio.tier_weights.core, 22.5);
+    assert.equal(r.value.portfolio.tier_weights.supporting, 15);
+    assert.equal(r.value.portfolio.tier_weights.satellite, 7.5);
+  });
+
+  it("sends a cap breach back for repair with the code's message", async () => {
+    const tooConcentrated = draft([["UNP", "core"], ["CSX", "satellite"], ["NSC", "satellite"], ["CP", "satellite"]]); // core 90×3/6 = 45%
+    const fixed = draft([["UNP", "core"], ["CSX", "core"], ["NSC", "core"], ["CP", "core"]]); // 22.5% each
+    const { cfg, t } = await cfgWith([tooConcentrated, fixed]);
+    const r = await draftPortfolio(cfg, input, goodAnalysis, "i1", allValid);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    assert.match(JSON.stringify(t.requests[1]!.messages.at(-1)), /over the 25% cap/);
+  });
+
+  it("sends an unknown ticker back for replacement", async () => {
+    const check: TickerCheck = async (ts) => ts.map((ticker) => ({ ticker, problem: ticker === "FAKE" ? "no price data" : null }));
+    const withFake = draft([["UNP", "core"], ["CSX", "core"], ["NSC", "core"], ["FAKE", "core"]]);
+    const fixed = draft([["UNP", "core"], ["CSX", "core"], ["NSC", "core"], ["CP", "core"]]);
+    const { cfg, t } = await cfgWith([withFake, fixed]);
+    const r = await draftPortfolio(cfg, input, goodAnalysis, "i1", check);
+    assert.ok(r.ok);
+    assert.match(JSON.stringify(t.requests[1]!.messages.at(-1)), /FAKE: no price data/);
+  });
+
+  it("won't draft for an abstaining analysis or an unknown interpretation", async () => {
+    const { cfg, t } = await cfgWith([]);
+    const abstain = { ...goodAnalysis, status: "not_investable" as const };
+    assert.ok(!(await draftPortfolio(cfg, input, abstain, "i1", allValid)).ok);
+    assert.ok(!(await draftPortfolio(cfg, input, goodAnalysis, "i9", allValid)).ok);
+    assert.equal(t.requests.length, 0);
+  });
+
+  it("the prompt states the same constraints the code enforces", () => {
+    assert.match(DRAFT_SYSTEM, /concentrated: 3–8 positions, at most 25%/);
+    assert.match(DRAFT_SYSTEM, /balanced: 8–15 positions, at most 15%/);
+    assert.match(DRAFT_SYSTEM, /majority: 45% cash/);
+    assert.match(DRAFT_SYSTEM, /core = 3, supporting = 2, satellite = 1/);
+  });
+});
+
+describe("priceTickerCheck", () => {
+  const days = (from: string, n: number) => {
+    const out: string[] = [];
+    for (let d = new Date(`${from}T12:00:00Z`); out.length < n; d.setUTCDate(d.getUTCDate() + 1)) {
+      if (d.getUTCDay() % 6 !== 0) out.push(d.toISOString().slice(0, 10));
+    }
+    return out;
+  };
+  const bars = (ds: string[]): PriceBar[] => ds.map((date) => ({ date, close: 10, adjClose: 10, divCash: 0, splitFactor: 1 }));
+  const live = bars(days("2026-01-02", 130)); // through early July
+  const stale = bars(days("2026-01-02", 60)); // stops in March
+  const post = new Date("2026-07-10T14:00:00Z");
+
+  it("accepts trading tickers, rejects unknown and stale ones", async () => {
+    const check = priceTickerCheck(fixtureSource({ UNP: live, OLD: stale }), post);
+    const r = await check(["UNP", "OLD", "NOPE", "unp"]);
+    assert.deepEqual(
+      r.map((x) => [x.ticker, x.problem === null]),
+      [["UNP", true], ["OLD", false], ["NOPE", false]],
+    );
+  });
+
+  it("works through the LookAheadGate before anything is frozen", async () => {
+    const gate = new LookAheadGate(fixtureSource({ UNP: live }), post);
+    const r = await priceTickerCheck(gate, post)(["UNP"]);
+    assert.equal(r[0]!.problem, null);
+  });
+});

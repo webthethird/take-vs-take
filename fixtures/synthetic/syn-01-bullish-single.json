@@ -1,0 +1,13 @@
+{
+  "id": "syn-01-bullish-single",
+  "synthetic_note": "SYNTHETIC: written for development; not a real post and must never be presented as one.",
+  "expect_status": "investable",
+  "why": "Tests a plain bullish single-name thesis.",
+  "input": {
+    "text": "Costco's membership model is the most underrated compounding machine in retail. Renewal rates above 90% mean the business keeps growing whatever the economy does, and the stock should keep beating the market for years.",
+    "created_at": "2026-07-20T15:12:00Z",
+    "context": [],
+    "attachments": [],
+    "synthetic": true
+  }
+}

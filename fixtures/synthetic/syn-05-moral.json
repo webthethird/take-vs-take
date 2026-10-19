@@ -1,0 +1,13 @@
+{
+  "id": "syn-05-moral",
+  "synthetic_note": "SYNTHETIC: written for development; not a real post and must never be presented as one.",
+  "expect_status": "not_investable",
+  "why": "A moral view about business with no asserted economic consequence. Must abstain, not stretch it into a trade.",
+  "input": {
+    "text": "Companies that lay people off while posting record profits are a disgrace. We need better values in business.",
+    "created_at": "2026-08-11T16:20:00Z",
+    "context": [],
+    "attachments": [],
+    "synthetic": true
+  }
+}

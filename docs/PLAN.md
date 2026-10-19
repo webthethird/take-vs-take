@@ -359,10 +359,16 @@ known split, a known dividend, and a gap.
 - Massive delisted coverage: unverified.
 - Public-demo licensing is **open**; decide by Milestone 3.
 
-**LLM**
-- Anthropic API, `messages.parse` + `zodOutputFormat`, as in `takes-classifier`.
-- Model choice is **open**. The stronger interpretation step likely warrants something above Haiku; settle it with a small eval.
-- Dev budget: $5, with a hard cap in code. Each call is logged with model, prompt version, tokens and cost.
+**LLM** (verified 2026-10-19 against the official models page and the installed SDK, `@anthropic-ai/sdk` 0.135.0)
+- Model: `claude-opus-5-5` at `medium` effort, with server-side fallbacks (`fallbacks: "default"`). The served model is recorded on every call.
+- **All current Claude models have a June 2026 training cutoff,** so the model doesn't change the pretraining-hindsight question; post dates do (§7).
+- Structured output: `beta.messages.parse` + `zodOutputFormat`; the stable system prompt is prompt-cached.
+- **Budget:** `LLM_BUDGET_USD` caps the *cumulative* ledger (`.cache/llm-ledger.jsonl`), not one process. Each call is refused if recorded spend plus its worst case would exceed the cap.
+- **Measured costs** (8 real calls on synthetic posts, $0.15 total):
+  - analysis: $0.004–0.023 per call; the first call writes the ~2.2k-token system prompt to cache;
+  - draft: $0.037–0.042 per call;
+  - every call was accepted on the first attempt, with no repairs.
+- A full comparison (2 analyses + 2 drafts + alignment) should therefore cost about $0.15, and the N = 5 self-consistency baseline about $0.75. Both are estimates from these measurements, not measured end to end.
 
 ## 9. Milestone 1 build order
 
@@ -394,3 +400,6 @@ network access, and an uninvestable fixture produces no portfolio.
 7. Price-data licensing for a public demo.
 8. Thesis-alignment label set and its eval: how to check the LLM's alignment judgments against human judgment.
 9. Whether the Fisher interval needs a correction for autocorrelated or heteroskedastic returns (e.g. a block bootstrap) before public use.
+10. **Default interpretation breadth.** The prompt asks for the broadest reading that covers the main claim; on the bearish synthetic post the model chose a narrower one ("money-center banks" over a mix). Supertake's "Build it now" chose the mix. Evaluate on real pairs before tuning.
+11. **ETF look-through for holdings overlap.** A draft can hold both ITB and its constituents (DHI, LEN, PHM); across sides, ITB vs. DHI counts as zero overlap. Co-movement captures it; holdings overlap doesn't.
+12. **Tiingo's hourly limit** (50/hour on the free tier) is the throughput bottleneck: a draft checks every ticker (6–11 requests so far), and the backtest window needs another request per ticker. Throttle or pace before running the self-consistency baseline.

@@ -1,0 +1,15 @@
+{
+  "id": "syn-06-context-reply",
+  "synthetic_note": "SYNTHETIC: written for development; not a real post and must never be presented as one.",
+  "expect_status": "insufficient_context",
+  "why": "Meaning depends on an unseen image. Must not guess.",
+  "input": {
+    "text": "This is exactly why I'm out.",
+    "created_at": "2026-08-14T14:00:00Z",
+    "attachments": [
+      "image"
+    ],
+    "context": [],
+    "synthetic": true
+  }
+}
