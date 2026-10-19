@@ -290,7 +290,8 @@ known split, a known dividend, and a gap.
 **Prices**
 - *Tiingo free:* 50 req/hr, 1,000/day, 500 symbols/month, 30+ years. Returns adjClose (CRSP method), divCash, splitFactor. License: "internal use only… your own personal use". Fine for Milestone 1 local development. **Not cleared for a public demo.**
 - *Massive (Polygon) free:* 5 calls/min, 2 years of history; individual terms are personal/non-business and bar "derivative works". Weaker than Tiingo.
-- Delisted-ticker coverage is unverified for both providers.
+- *Tiingo, verified live 2026-10-19:* unknown symbols return 404. Delisted coverage is **partial**: TWTR is retained (through 2022-10-28), but SIVB is 404, so a 404 can't distinguish "never existed" from "delisted and dropped". Share classes use a dash (BRK-B; BRK.B is 404). `adjClose` total return matched an independent close + dividend computation for SPY (Jun–Oct 2026) to within 1e-12. Not yet checked against a split.
+- Massive delisted coverage: unverified.
 - Public-demo licensing is **open**; decide by Milestone 3.
 
 **LLM**

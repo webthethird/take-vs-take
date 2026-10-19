@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test 'test/**/*.test.ts'"
+    "test": "tsx --test 'test/**/*.test.ts'",
+    "prices": "tsx src/cli/prices.ts"
   },
   "dependencies": {
     "zod": "^4.6.7"

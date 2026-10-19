@@ -15,7 +15,10 @@
 //     core 25% vs satellite 22.5% for a draft that said 3:1.
 
 import type { CashLevel, Concentration, DraftPosition, PortfolioDraft, Tier } from "./schema.js";
-import type { Result } from "./post-url.js";
+import type { Result } from "./result.js";
+import { tickerKey } from "./ticker.js";
+
+export { tickerKey } from "./ticker.js";
 
 /// Recorded in every frozen run so a later change to any table below can't
 /// silently reinterpret an old result.
@@ -75,13 +78,6 @@ export type WeightError =
 
 function fail(error: WeightError, message: string): { ok: false; error: WeightError; message: string } {
   return { ok: false, error, message };
-}
-
-/// For duplicate detection only. Share classes are written BRK.B, BRK-B or
-/// BRK/B depending on the source; all three are one holding. Mapping to a
-/// provider's symbol format is the universe validator's job, not this one's.
-export function tickerKey(ticker: string): string {
-  return ticker.trim().toUpperCase().replace(/[./]/g, "-");
 }
 
 /// Per-name weight for each tier, given counts: weight ∝ tier points. Pure

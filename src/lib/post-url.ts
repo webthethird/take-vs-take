@@ -7,6 +7,10 @@
 //      so they are kept for display and canonical links but never used to
 //      decide whether two inputs are the same post.
 
+import { err as fail, type Result } from "./result.js";
+
+export type { Result } from "./result.js";
+
 /// Hosts that serve the same status pages. Mirror/embed-fixer domains
 /// (fxtwitter, vxtwitter, nitter, ...) are deliberately not accepted: they are
 /// third-party services, not X.
@@ -48,14 +52,6 @@ export type PostUrlError =
   | "not_a_status_url"
   | "invalid_handle"
   | "invalid_post_id";
-
-export type Result<T, E extends string> =
-  | { ok: true; value: T }
-  | { ok: false; error: E; message: string };
-
-function fail<E extends string>(error: E, message: string): { ok: false; error: E; message: string } {
-  return { ok: false, error, message };
-}
 
 export function parsePostUrl(input: string): Result<ParsedPostUrl, PostUrlError> {
   const trimmed = input.trim();
