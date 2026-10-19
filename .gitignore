@@ -1,0 +1,12 @@
+# Private working brief (contains personal context) — never publish
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+
+node_modules/
+.env
+.env.*
+!.env.example
+.cache/
+dist/
+.next/
