@@ -76,11 +76,23 @@ ${post.text}
 
 // ── Records ──────────────────────────────────────────────────────────────
 
+/// A non-default reading of a post, drafted and frozen alongside the default
+/// so it can be reported as sensitivity, never swapped in after the fact.
+export type Alternate = {
+  interpretation_id: string;
+  portfolio: Portfolio | null;
+  /// Why the draft failed, if it did. A failed alternate doesn't fail the
+  /// comparison; a failed default does.
+  error: string | null;
+};
+
 export type Side = {
   label: "A" | "B";
   post: Pick<PostInput, "post_id" | "url" | "author_handle" | "created_at" | "attachments" | "provenance">;
   analysis: ThesisAnalysis;
+  /// The default reading's portfolio: the headline.
   portfolio: Portfolio | null;
+  alternates: Alternate[];
   attempts: Attempt[];
 };
 
@@ -91,6 +103,30 @@ export type FrozenRun = Side & {
 };
 
 export type Finding = { kind: string; text: string };
+
+export type ReadingResult = {
+  side: "A" | "B";
+  interpretation_id: string;
+  label: string;
+  is_default: boolean;
+  author_stated: boolean;
+  /// Null when the reading couldn't be backtested; never silently dropped.
+  metrics: BacktestResult["metrics"] | null;
+  error: string | null;
+};
+
+export type ReadingPair = {
+  a: string;
+  b: string;
+  is_headline: boolean;
+  holdings_overlap: number;
+  shared: string[];
+  ex_ante_raw: number | null;
+  ex_ante_raw_ci95: [number, number] | null;
+  ex_ante_direction: CoMovement | null;
+  ex_ante_residual: number | null;
+  error: string | null;
+};
 
 export type ComparisonReport = {
   comparison_id: string;
@@ -110,6 +146,8 @@ export type ComparisonReport = {
     realized: CorrelationStats | null;
     realized_direction: CoMovement | null;
   } | null;
+  /// Every reading of each post, and every A-reading x B-reading pairing.
+  sensitivity: { readings: ReadingResult[]; pairs: ReadingPair[] } | null;
   findings: Finding[];
   llm_cost_usd: number;
 };
@@ -124,6 +162,8 @@ export type CompareDeps = {
   now?: () => Date;
   /// Last trading day to evaluate through; defaults to the benchmark's latest.
   end?: string;
+  /// Draft every reading, not just the default (default true).
+  alternates?: boolean;
 };
 
 const shift = (d: string, days: number) => new Date(Date.parse(`${d}T12:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
@@ -137,12 +177,25 @@ async function buildSide(deps: CompareDeps, gate: LookAheadGate, label: "A" | "B
   const analysis = a.value.analysis;
   const keep = { post_id: post.post_id, url: post.url, author_handle: post.author_handle, created_at: post.created_at, attachments: post.attachments, provenance: post.provenance };
   if (analysis.status !== "investable" || !analysis.default_interpretation) {
-    return { ok: true, value: { label, post: keep, analysis, portfolio: null, attempts: a.attempts } };
+    return { ok: true, value: { label, post: keep, analysis, portfolio: null, alternates: [], attempts: a.attempts } };
   }
   const asOf = new Date(post.created_at);
-  const d = await draftPortfolio(deps.llm, input, analysis, analysis.default_interpretation, priceTickerCheck(gate, asOf));
+  const check = priceTickerCheck(gate, asOf);
+  const d = await draftPortfolio(deps.llm, input, analysis, analysis.default_interpretation, check);
   if (!d.ok) return err("draft_failed", `Side ${label}: ${d.error}: ${d.message}`);
-  return { ok: true, value: { label, post: keep, analysis, portfolio: d.value.portfolio, attempts: [...a.attempts, ...d.attempts] } };
+  const attempts = [...a.attempts, ...d.attempts];
+
+  // Every other reading, drafted now, so all are frozen together.
+  const alternates: Alternate[] = [];
+  if (deps.alternates ?? true) {
+    for (const i of analysis.interpretations) {
+      if (i.id === analysis.default_interpretation) continue;
+      const x = await draftPortfolio(deps.llm, input, analysis, i.id, check);
+      attempts.push(...x.attempts);
+      alternates.push(x.ok ? { interpretation_id: i.id, portfolio: x.value.portfolio, error: null } : { interpretation_id: i.id, portfolio: null, error: `${x.error}: ${x.message}` });
+    }
+  }
+  return { ok: true, value: { label, post: keep, analysis, portfolio: d.value.portfolio, alternates, attempts } };
 }
 
 function freeze(side: Side, now: Date): FrozenRun {
@@ -152,7 +205,7 @@ function freeze(side: Side, now: Date): FrozenRun {
     weights: WEIGHT_RULE_VERSION,
     model: side.attempts[0]?.model_requested ?? "unknown",
   };
-  const body = { post_id: side.post.post_id, analysis: side.analysis, portfolio: side.portfolio, versions };
+  const body = { post_id: side.post.post_id, analysis: side.analysis, portfolio: side.portfolio, alternates: side.alternates, versions };
   const run_id = createHash("sha256").update(JSON.stringify(body)).digest("hex").slice(0, 16);
   return { ...side, run_id, frozen_at: now.toISOString(), versions };
 }
@@ -207,6 +260,7 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
     backtests: null,
     holdings_overlap: null,
     co_movement: null,
+    sensitivity: null,
     findings: [],
     llm_cost_usd,
   };
@@ -230,7 +284,8 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
   const cutoffDay = etDate(cutoff);
   const start = shift(cutoffDay, -400);
   const end = deps.end ?? etDate(now());
-  const tickers = [...new Set([...pa.positions, ...pb.positions].map((p) => p.ticker))].sort();
+  const allPortfolios = [fa, fb].flatMap((f) => [f.portfolio!, ...f.alternates.flatMap((x) => (x.portfolio ? [x.portfolio] : []))]);
+  const tickers = [...new Set(allPortfolios.flatMap((p) => p.positions.map((x) => x.ticker)))].sort();
   const series: PriceSeries[] = [];
   for (const t of [BENCHMARK, ...tickers]) {
     const r = await gate.daily(t, start, end);
@@ -275,9 +330,56 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
     realized: re.ok ? re.value : null,
     realized_direction: re.ok && re.value.rawCi95 ? coMovementDirection(re.value.rawCi95) : null,
   };
+  report.sensitivity = sensitivity(fa, fb, series, bench, w.value, cutoff.toISOString());
   report.findings = findings(report);
   await writeFile(join(dir, "report.json"), JSON.stringify(report, null, 2));
   return { ok: true, value: report };
+}
+
+function readingsOf(f: FrozenRun): { id: string; portfolio: Portfolio }[] {
+  const out = [{ id: f.analysis.default_interpretation!, portfolio: f.portfolio! }];
+  for (const x of f.alternates) if (x.portfolio) out.push({ id: x.interpretation_id, portfolio: x.portfolio });
+  return out;
+}
+
+export function sensitivity(fa: FrozenRun, fb: FrozenRun, series: PriceSeries[], bench: PriceSeries, window: WindowResult, cutoff: string): NonNullable<ComparisonReport["sensitivity"]> {
+  const side = (p: Portfolio) => ({ holdings: p.positions.map((x) => ({ ticker: x.ticker, weight: x.weight })), cashWeight: p.cash_weight });
+  const readings: ReadingResult[] = [];
+  for (const f of [fa, fb]) {
+    for (const r of readingsOf(f)) {
+      const i = f.analysis.interpretations.find((x) => x.id === r.id)!;
+      const b = backtest({ ...side(r.portfolio), prices: series, window });
+      readings.push({
+        side: f.label,
+        interpretation_id: r.id,
+        label: i.label,
+        is_default: r.id === f.analysis.default_interpretation,
+        author_stated: i.author_stated,
+        metrics: b.ok ? b.value.metrics : null,
+        error: b.ok ? null : `${b.error}: ${b.message}`,
+      });
+    }
+  }
+  const pairs: ReadingPair[] = [];
+  for (const ra of readingsOf(fa)) {
+    for (const rb of readingsOf(fb)) {
+      const h = holdingsOverlap(side(ra.portfolio), side(rb.portfolio));
+      const ex = exAnteCorrelation({ a: side(ra.portfolio), b: side(rb.portfolio), prices: series, benchmark: bench, cutoff });
+      pairs.push({
+        a: ra.id,
+        b: rb.id,
+        is_headline: ra.id === fa.analysis.default_interpretation && rb.id === fb.analysis.default_interpretation,
+        holdings_overlap: h.overlap,
+        shared: h.shared.map((x) => x.ticker),
+        ex_ante_raw: ex.ok ? ex.value.raw : null,
+        ex_ante_raw_ci95: ex.ok ? ex.value.rawCi95 : null,
+        ex_ante_direction: ex.ok && ex.value.rawCi95 ? coMovementDirection(ex.value.rawCi95) : null,
+        ex_ante_residual: ex.ok ? ex.value.residual : null,
+        error: ex.ok ? null : ex.message,
+      });
+    }
+  }
+  return { readings, pairs };
 }
 
 /// Deterministic, conservative statements about where the dimensions
@@ -298,6 +400,37 @@ export function findings(r: ComparisonReport): Finding[] {
   }
   if (opposed && r.holdings_overlap && r.holdings_overlap.shared.length > 0) {
     out.push({ kind: "shared_holdings", text: `The opinions conflict, yet both portfolios hold ${r.holdings_overlap.shared.map((s) => s.ticker).join(", ")}.` });
+  }
+  const sens = r.sensitivity?.pairs ?? [];
+  const directions = new Set(sens.map((p) => p.ex_ante_direction));
+  // Only definite opposite directions count: "no clear relationship" under
+  // one reading is not evidence of a different relationship.
+  if (directions.has("together") && directions.has("apart")) {
+    const label = (side: "A" | "B", id: string) => r.sides.find((s) => s.label === side)?.analysis.interpretations.find((i) => i.id === id)?.label ?? id;
+    const words = (d: CoMovement | null) => (d ?? "unavailable").replace(/_/g, " ");
+    // If one side's reading alone determines the direction, say that: it's
+    // the actionable message ("it depends on how A is read").
+    const bySide = (side: "a" | "b") => {
+      const groups = new Map<string, Set<CoMovement | null>>();
+      for (const p of sens) groups.set(p[side], (groups.get(p[side]) ?? new Set()).add(p.ex_ante_direction));
+      return [...groups].every(([, ds]) => ds.size === 1) ? [...groups].map(([id, ds]) => [id, [...ds][0]!] as const) : null;
+    };
+    const a = bySide("a");
+    const b = bySide("b");
+    let text: string;
+    if (a && !b) {
+      text = `How the portfolios relate depends on how post A is read, whatever the reading of B: ${a.map(([id, d]) => `"${label("A", id)}" -> ${words(d)}`).join("; ")}.`;
+    } else if (b && !a) {
+      text = `How the portfolios relate depends on how post B is read, whatever the reading of A: ${b.map(([id, d]) => `"${label("B", id)}" -> ${words(d)}`).join("; ")}.`;
+    } else {
+      text = `How the portfolios relate depends on how the posts are read: ${sens.map((p) => `A as "${label("A", p.a)}" with B as "${label("B", p.b)}" -> ${words(p.ex_ante_direction)}`).join("; ")}.`;
+    }
+    out.push({ kind: "interpretation_sensitive", text });
+  }
+  const sharedSomewhere = sens.filter((p) => !p.is_headline && p.shared.length > 0);
+  const headline = sens.find((p) => p.is_headline);
+  if (headline && headline.shared.length === 0 && sharedSomewhere.length > 0) {
+    out.push({ kind: "interpretation_sensitive_holdings", text: `The headline portfolios share no holdings, but other readings do (${[...new Set(sharedSomewhere.flatMap((p) => p.shared))].join(", ")}).` });
   }
   if (ex && ex.rawCi95 && ex.residualCi95) {
     const raw = coMovementDirection(ex.rawCi95);

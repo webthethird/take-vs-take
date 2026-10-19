@@ -29,7 +29,7 @@ const market = (() => {
   return days.map(() => ((a = (a * 48271) % 2147483647) / 2147483647 - 0.5) * 0.02);
 })();
 const data: Record<string, PriceBar[]> = { SPY: walk(1, 1, market) };
-["RA", "RB", "RC", "RD", "TA", "TB", "TC", "TD"].forEach((t, i) => (data[t] = walk(100 + i, i < 4 ? 1.2 : -0.5, market)));
+["RA", "RB", "RC", "RD", "TA", "TB", "TC", "TD", "FA", "FB", "FC", "FD"].forEach((t, i) => (data[t] = walk(100 + i, i < 4 ? 1.2 : i < 8 ? -0.5 : 0.8, market)));
 
 const post = (id: string, handle: string, created_at: string, text: string) =>
   PostInput.parse({
@@ -199,5 +199,135 @@ describe("findings", () => {
       holdings_overlap: { overlap: 0.2, shared: [{ ticker: "MSFT", shareA: 0.2, shareB: 0.3 }] },
     }));
     assert.ok(f.some((x) => x.kind === "shared_holdings" && /MSFT/.test(x.text)));
+  });
+});
+
+describe("compare: alternate readings", () => {
+  const twoReadings: ThesisAnalysis = {
+    ...analysis("rails", "Buy the railroads."),
+    interpretations: [
+      { id: "i1", label: "Railroads", expression: "own railroads", author_stated: true, gap_note: "" },
+      { id: "i2", label: "Freight broadly", expression: "own trucking too", author_stated: false, gap_note: "adds trucking" },
+    ],
+  };
+
+  it("drafts and freezes every reading before outcomes, and reports sensitivity", async () => {
+    // A: i1 = rails, i2 = the same trucks B holds. B: trucks.
+    const { deps, t } = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), draft(["TA", "TB", "TC", "TD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment]);
+    const r = await compare(deps, postA, postB);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    if (!r.ok) return;
+    assert.equal(t.requests.length, 6);
+    const a = r.value.sides[0]!;
+    assert.equal(a.alternates.length, 1);
+    assert.equal(a.alternates[0]!.interpretation_id, "i2");
+    // The headline is still the default reading.
+    assert.deepEqual(a.portfolio!.positions.map((p) => p.ticker), ["RA", "RB", "RC", "RD"]);
+    const s = r.value.sensitivity!;
+    assert.equal(s.readings.length, 3);
+    assert.equal(s.pairs.length, 2);
+    const headline = s.pairs.find((p) => p.is_headline)!;
+    const alt = s.pairs.find((p) => !p.is_headline)!;
+    assert.equal(headline.a, "i1");
+    assert.equal(headline.holdings_overlap, 0);
+    assert.equal(alt.holdings_overlap, 1);
+    assert.equal(alt.ex_ante_direction, "together");
+    assert.ok(r.value.findings.some((f) => f.kind === "interpretation_sensitive_holdings" && /TA/.test(f.text)));
+    // Headline numbers are the same as they'd be without alternates.
+    assert.equal(r.value.co_movement!.ex_ante!.raw, headline.ex_ante_raw);
+  });
+
+  it("an alternate holding tickers no other portfolio holds is fetched and backtested", async () => {
+    const { deps, reads } = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), draft(["FA", "FB", "FC", "FD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment]);
+    const r = await compare(deps, postA, postB);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    if (!r.ok) return;
+    assert.ok(reads.some((x) => x.ticker === "FA" && x.end >= "2026-07-16"));
+    const alt = r.value.sensitivity!.readings.find((x) => x.interpretation_id === "i2")!;
+    assert.ok(alt.metrics, alt.error ?? "");
+    assert.equal(r.value.sensitivity!.pairs.find((p) => !p.is_headline)!.error, null);
+  });
+
+  it("the frozen run id covers the alternates", async () => {
+    const x = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), draft(["FA", "FB", "FC", "FD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment]);
+    const y = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), draft(["TA", "TB", "TC", "TD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment]);
+    const rx = await compare(x.deps, postA, postB);
+    const ry = await compare(y.deps, postA, postB);
+    assert.ok(rx.ok && ry.ok);
+    if (rx.ok && ry.ok) {
+      assert.deepEqual(rx.value.sides[0]!.portfolio, ry.value.sides[0]!.portfolio);
+      assert.notEqual(rx.value.sides[0]!.run_id, ry.value.sides[0]!.run_id);
+    }
+  });
+
+  it("a failed alternate is recorded, not fatal", async () => {
+    const tooBig = draft(["RA", "RB"]); // 2 positions: under the concentrated minimum of 3
+    const { deps } = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), tooBig, tooBig, tooBig, analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment]);
+    const r = await compare(deps, postA, postB);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    if (!r.ok) return;
+    const alt = r.value.sides[0]!.alternates[0]!;
+    assert.equal(alt.portfolio, null);
+    assert.match(alt.error!, /invalid_after_repair/);
+    assert.equal(r.value.sensitivity!.pairs.length, 1);
+  });
+
+  it("alternates can be switched off", async () => {
+    const { deps, t } = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment]);
+    const r = await compare({ ...deps, alternates: false }, postA, postB);
+    assert.ok(r.ok);
+    assert.equal(t.requests.length, 5);
+  });
+
+  it("flags when the co-movement direction depends on the reading", () => {
+    const rep = {
+      sides: [
+        { label: "A", analysis: { interpretations: [{ id: "i1", label: "Rails" }, { id: "i2", label: "Freight" }] } },
+        { label: "B", analysis: { interpretations: [{ id: "i1", label: "Trucks" }] } },
+      ],
+      alignment: null, holdings_overlap: null, co_movement: null,
+      sensitivity: {
+        readings: [],
+        pairs: [
+          { a: "i1", b: "i1", is_headline: true, shared: [], ex_ante_direction: "apart" },
+          { a: "i2", b: "i1", is_headline: false, shared: [], ex_ante_direction: "together" },
+        ],
+      },
+    } as unknown as ComparisonReport;
+    const f = findings(rep);
+    const s = f.find((x) => x.kind === "interpretation_sensitive");
+    assert.ok(s);
+    // B has one reading, so A's reading alone determines the direction.
+    assert.match(s!.text, /depends on how post A is read, whatever the reading of B: "Rails" -> apart; "Freight" -> together/);
+  });
+
+  it("lists every pairing when neither side's reading alone decides", () => {
+    const rep = {
+      sides: [
+        { label: "A", analysis: { interpretations: [{ id: "i1", label: "A1" }, { id: "i2", label: "A2" }] } },
+        { label: "B", analysis: { interpretations: [{ id: "i1", label: "B1" }, { id: "i2", label: "B2" }] } },
+      ],
+      alignment: null, holdings_overlap: null, co_movement: null,
+      sensitivity: { readings: [], pairs: [
+        { a: "i1", b: "i1", is_headline: true, shared: [], ex_ante_direction: "together" },
+        { a: "i1", b: "i2", is_headline: false, shared: [], ex_ante_direction: "apart" },
+        { a: "i2", b: "i1", is_headline: false, shared: [], ex_ante_direction: "apart" },
+        { a: "i2", b: "i2", is_headline: false, shared: [], ex_ante_direction: "together" },
+      ] },
+    } as unknown as ComparisonReport;
+    const s = findings(rep).find((x) => x.kind === "interpretation_sensitive")!;
+    assert.match(s.text, /depends on how the posts are read: A as "A1" with B as "B1" -> together; A as "A1" with B as "B2" -> apart/);
+  });
+
+  it("no sensitivity finding when every pairing agrees or is unclear", () => {
+    const rep = {
+      sides: [], alignment: null, holdings_overlap: null, co_movement: null,
+      sensitivity: { readings: [], pairs: [
+        { a: "i1", b: "i1", is_headline: true, shared: [], ex_ante_direction: "together" },
+        { a: "i2", b: "i1", is_headline: false, shared: [], ex_ante_direction: "together" },
+        { a: "i3", b: "i1", is_headline: false, shared: [], ex_ante_direction: "no_clear_relationship" },
+      ] },
+    } as unknown as ComparisonReport;
+    assert.deepEqual(findings(rep).filter((x) => x.kind.startsWith("interpretation")), []);
   });
 });

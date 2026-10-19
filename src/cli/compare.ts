@@ -111,6 +111,29 @@ function print(rep: ComparisonReport) {
     if (cm.realized) console.log(`  realized over the window (outcome): raw ρ ${cm.realized.raw?.toFixed(2) ?? "n/a"} ${ci(cm.realized.rawCi95)} -> ${cm.realized_direction?.replace(/_/g, " ") ?? "n/a"}`);
   }
 
+  const sens = rep.sensitivity;
+  if (sens && sens.pairs.length > 1) {
+    console.log(`\n--- Sensitivity to interpretation (every reading was drafted and frozen before outcomes)`);
+    for (const rd of sens.readings) {
+      const m = rd.metrics;
+      console.log(`  ${rd.side}:${rd.interpretation_id}${rd.is_default ? "*" : " "} ${rd.label}${rd.author_stated ? "" : " (inferred)"}: ${m ? `${pct(m.cumulativeReturn)}, vol ${m.annualizedVolatility === null ? "n/a" : (m.annualizedVolatility * 100).toFixed(1) + "%"}` : `not backtested (${rd.error})`}`);
+    }
+    for (const s of rep.sides) {
+      for (const alt of s.alternates.filter((x) => !x.portfolio)) console.log(`  ${s.label}:${alt.interpretation_id}  draft failed: ${alt.error}`);
+    }
+    for (const p of sens.pairs) {
+      const ci = p.ex_ante_raw_ci95 ? ` [${p.ex_ante_raw_ci95[0].toFixed(2)}, ${p.ex_ante_raw_ci95[1].toFixed(2)}]` : "";
+      console.log(`  A:${p.a} x B:${p.b}${p.is_headline ? " (headline)" : ""}  overlap ${(p.holdings_overlap * 100).toFixed(0)}%${p.shared.length ? ` (${p.shared.join(", ")})` : ""}  raw ρ ${p.ex_ante_raw?.toFixed(2) ?? "n/a"}${ci} -> ${p.ex_ante_direction?.replace(/_/g, " ") ?? p.error}`);
+    }
+    for (const s of rep.sides) {
+      for (const alt of s.alternates) {
+        if (!alt.portfolio) continue;
+        const names = alt.portfolio.positions.map((x) => `${x.ticker} ${round1(x.weight)}%`).join(", ");
+        console.log(`  ${s.label}:${alt.interpretation_id} "${alt.portfolio.title}": ${names}, cash ${alt.portfolio.cash_weight}%`);
+      }
+    }
+  }
+
   if (rep.findings.length) {
     console.log(`\n--- Findings`);
     for (const f of rep.findings) console.log(`  * ${f.text}`);

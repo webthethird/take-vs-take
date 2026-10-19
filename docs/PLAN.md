@@ -303,6 +303,14 @@ Guards:
 - **Coverage:** a name lacking ≥ 90% of the estimation window is excluded from the estimate. If less than 90% of invested weight remains covered → "insufficient history".
 - **Low exposure:** if a side's annualized volatility over the estimation window falls below a floor (provisional: 3%), show "minimal market exposure" instead of ρ.
 
+**Interpretation sensitivity.** Every reading of each post (up to 3) is
+drafted before freezing and frozen with the default; the default stays the
+headline. Each A-reading × B-reading pairing gets holdings overlap and
+ex-ante co-movement. A finding is stated only when *definite* opposite
+directions (together and apart) both occur; "no clear relationship" under
+one reading is not evidence of a different relationship. A reading that
+fails to draft or backtest is reported with its error, never dropped.
+
 **Self-consistency baseline.** Build each take N = 5 times from fresh calls,
 not the cache. Report:
 - mean pairwise holdings overlap, raw ρ and residual ρ within side A;
@@ -394,7 +402,7 @@ network access, and an uninvestable fixture produces no portfolio.
 1. Example post pair(s): the developer is collecting candidates. Write the selection criteria first.
 2. Interpretation model choice and eval design.
 3. Consensus portfolio vs. pinned first run as the headline.
-4. Whether alternate-interpretation sensitivity ships in Milestone 1 or later.
+4. ~~Whether alternate-interpretation sensitivity ships in Milestone 1.~~ Done 2026-10-19: every reading is drafted and frozen before outcomes; the report grids all A-reading × B-reading pairings. On pair-01 the co-movement direction depended entirely on how post A was read (together / apart / together with shared MSFT, AMZN). Cost: about $0.04 per alternate draft.
 5. Calibrating the tier, style and cash tables against more Supertake observations, ideally with per-name weights.
 6. X developer agreement terms for storing and displaying post text.
 7. Price-data licensing for a public demo.
