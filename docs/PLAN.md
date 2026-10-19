@@ -257,7 +257,8 @@ should replace it (names in ≥ k of N runs) is **open**.
 ## 6. Backtest conventions
 
 - **Cutoff:** `max(createdA, createdB)`, plus any context retrieved later.
-- **Entry:** the regular-session close of the first trading day whose 16:00 ET close is after the cutoff. If the post lands at 15:59 ET, entry is that day's close.
+- **Entry:** the close of the first trading day strictly **after the cutoff's ET date**. Never the post's own day, whatever the time. *Revised 2026-10-19:* the earlier rule ("first close after the cutoff time") needs an early-close calendar to be correct, since half days close at 13:00 ET, and a post at 14:00 on a half day would otherwise be bought at a price set before it existed. The T+1 rule needs no calendar and matches the LookAheadGate, which blocks the whole cutoff day. Cost: up to one trading day of lost window.
+- **Market calendar:** the benchmark's (SPY's) trading days.
 - **Prices:** adjusted close (split + dividend adjusted, total return).
 - **Policy:** buy-and-hold from frozen weights; weights drift; no rebalancing. Notional $10,000; fractional shares; no fees, slippage or taxes (declared).
 - **Cash:** 0% return.
@@ -265,6 +266,8 @@ should replace it (names in ≥ k of N runs) is **open**.
 - **End:** latest available close, the same for both sides.
 - **Metrics:** cumulative return, max drawdown, annualized volatility, return vs. SPY. No Sharpe on windows under 6 months.
 - **Missing data:** a symbol without a price on the entry date fails validation. A mid-window gap carries the last price forward and is flagged. Delisting mid-window is flagged and the value is frozen at the last price. Holdings are never silently replaced.
+- **Adjustment cross-check:** every holding's adjClose return is compared against an independent close + dividend + split computation, and a mismatch is flagged. Verified on real data: SPY dividends and NVDA's 10:1 split (2024-06-10) agree to ~1e-13. Unverified: a split and a dividend on the same day.
+- **Real provider data is not committed.** Tests use synthetic fixtures, because Tiingo's free tier is licensed for personal use, not redistribution.
 - **Carried forward:** if the posts are more than 30 days apart, the older thesis is labeled "interpreted as of the later post's date".
 
 Fixture-level tests should be checkable by hand: a 2-asset portfolio with a
@@ -290,7 +293,7 @@ known split, a known dividend, and a gap.
 **Prices**
 - *Tiingo free:* 50 req/hr, 1,000/day, 500 symbols/month, 30+ years. Returns adjClose (CRSP method), divCash, splitFactor. License: "internal use only… your own personal use". Fine for Milestone 1 local development. **Not cleared for a public demo.**
 - *Massive (Polygon) free:* 5 calls/min, 2 years of history; individual terms are personal/non-business and bar "derivative works". Weaker than Tiingo.
-- *Tiingo, verified live 2026-10-19:* unknown symbols return 404. Delisted coverage is **partial**: TWTR is retained (through 2022-10-28), but SIVB is 404, so a 404 can't distinguish "never existed" from "delisted and dropped". Share classes use a dash (BRK-B; BRK.B is 404). `adjClose` total return matched an independent close + dividend computation for SPY (Jun–Oct 2026) to within 1e-12. Not yet checked against a split.
+- *Tiingo, verified live 2026-10-19:* unknown symbols return 404. Delisted coverage is **partial**: TWTR is retained (through 2022-10-28), but SIVB is 404, so a 404 can't distinguish "never existed" from "delisted and dropped". Share classes use a dash (BRK-B; BRK.B is 404). `adjClose` total return matched an independent close + dividend + split computation for SPY (Jun–Oct 2026, dividends) and NVDA (10:1 split, 2024-06-10) to ~1e-13. `splitFactor` is the new-shares-per-old ratio on the split date.
 - Massive delisted coverage: unverified.
 - Public-demo licensing is **open**; decide by Milestone 3.
 
