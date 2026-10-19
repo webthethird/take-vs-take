@@ -1,17 +1,20 @@
 // How two portfolios relate, numerically. Spec: docs/PLAN.md §5.
 //
 //   holdingsOverlap   — a plain fact: Σ min(wA, wB) over invested weight.
-//   exAnteCorrelation — the headline: do the positions move together, as
-//                       estimated from the year BEFORE the posts? Raw and
-//                       market-adjusted (residual after regressing on SPY).
+//   exAnteCorrelation — portfolio co-movement, estimated from the year BEFORE
+//                       the posts. Raw ρ is primary; residual ρ (after
+//                       regressing each side on SPY) and β are explanatory.
 //   realizedCorrelation — the same, over the backtest window. An outcome,
 //                       and labeled as one.
 //
-// Why residual: nearly every long-only stock portfolio correlates positively
-// with every other, because they all carry market beta. Regressing each side
-// on the benchmark and correlating what's left asks the question that matters
-// here: beyond both being "the stock market", do these bets move together or
-// against each other?
+// None of this measures whether the *opinions* agree. Thesis alignment is a
+// separate, LLM-judged dimension (PLAN.md §5.1); co-movement and alignment can
+// disagree, and that mismatch is a finding, not an error.
+//
+// Why raw is primary: market exposure is part of a portfolio's economic
+// character. On real data (PLAN.md §5.4) oil vs clean energy was −0.16 raw but
+// +0.03 residual, because oil moved against the market that year. Residual
+// removed exactly the opposition worth showing.
 //
 // Pure functions over fetched series; no I/O.
 
@@ -117,9 +120,13 @@ export type SideStats = {
   residualAnnualVol: number;
 };
 
+export type Interval = [low: number, high: number];
+
 export type CorrelationStats = {
   raw: number | null;
+  rawCi95: Interval | null;
   residual: number | null;
+  residualCi95: Interval | null;
   a: SideStats;
   b: SideStats;
   days: number;
@@ -151,7 +158,42 @@ export function correlationStats(ra: number[], rb: number[], rm: number[]): Corr
     }
   }
   if (raw === null && notes.length === 0) notes.push("A return series is constant.");
-  return { raw, residual, a: A.stats, b: B.stats, days: ra.length, notes };
+  const n = ra.length;
+  return {
+    raw,
+    rawCi95: raw === null ? null : fisherInterval(raw, n),
+    residual,
+    residualCi95: residual === null ? null : fisherInterval(residual, n),
+    a: A.stats,
+    b: B.stats,
+    days: n,
+    notes,
+  };
+}
+
+/// Approximate 95% interval for a Pearson ρ via the Fisher transform:
+/// tanh(atanh ρ ± 1.96 / √(n − 3)). Assumes independent observations. Daily
+/// returns cluster in volatility and have fat tails, so this is likely too
+/// narrow: a minimum bar for stating a direction, not a precise uncertainty.
+/// Null when n < 4, where the formula is undefined.
+export function fisherInterval(r: number, n: number): Interval | null {
+  if (n < 4) return null;
+  // atanh(±1) is infinite; a perfect correlation's interval is the point.
+  if (Math.abs(r) >= 1) return [r, r];
+  const z = Math.atanh(r);
+  const h = 1.96 / Math.sqrt(n - 3);
+  return [Math.tanh(z - h), Math.tanh(z + h)];
+}
+
+export type CoMovement = "together" | "apart" | "no_clear_relationship";
+
+/// The only wording the comparison may use for co-movement. Deliberately has
+/// no strength levels: a direction is stated only when the interval excludes
+/// zero, and there's no calibrated basis yet for "strong" or "weak".
+export function coMovementDirection(ci: Interval): CoMovement {
+  if (ci[0] > 0) return "together";
+  if (ci[1] < 0) return "apart";
+  return "no_clear_relationship";
 }
 
 // ── Ex-ante ──────────────────────────────────────────────────────────────

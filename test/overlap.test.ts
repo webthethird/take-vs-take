@@ -3,8 +3,10 @@ import { describe, it } from "node:test";
 import { backtest, type Window } from "../src/lib/backtest.js";
 import {
   ESTIMATION_DAYS,
+  coMovementDirection,
   correlationStats,
   exAnteCorrelation,
+  fisherInterval,
   holdingsOverlap,
   pearson,
   realizedCorrelation,
@@ -314,5 +316,47 @@ describe("realizedCorrelation", () => {
     const b = backtest({ holdings: [{ ticker: "SOLAR", weight: 100 }], cashWeight: 0, prices: series, window: short });
     assert.ok(b.ok);
     if (b.ok) assert.equal(realizedCorrelation(bt("OIL"), b.value, bt("SPY")).ok, false);
+  });
+});
+
+describe("fisherInterval / coMovementDirection", () => {
+  it("matches hand computation at n = 252", () => {
+    // atanh(−0.156) = −0.15729; h = 1.96 / √249 = 0.12421 -> tanh(−0.28150), tanh(−0.03308)
+    const ci = fisherInterval(-0.156, 252)!;
+    close(ci[0], Math.tanh(Math.atanh(-0.156) - 1.96 / Math.sqrt(249)), 1e-12);
+    close(ci[0], -0.2743, 1e-4);
+    close(ci[1], -0.0331, 1e-4);
+  });
+
+  it("states a direction only when the interval excludes zero", () => {
+    // The real-data cases from PLAN.md §5.4.
+    assert.equal(coMovementDirection(fisherInterval(-0.156, 252)!), "apart");
+    assert.equal(coMovementDirection(fisherInterval(0.034, 252)!), "no_clear_relationship");
+    assert.equal(coMovementDirection(fisherInterval(0.509, 252)!), "together");
+    assert.equal(coMovementDirection(fisherInterval(0.197, 252)!), "together");
+    assert.equal(coMovementDirection(fisherInterval(-0.019, 252)!), "no_clear_relationship");
+  });
+
+  it("the same ρ is unclear with little data and clear with more", () => {
+    assert.equal(coMovementDirection(fisherInterval(0.3, 20)!), "no_clear_relationship");
+    assert.equal(coMovementDirection(fisherInterval(0.3, 252)!), "together");
+  });
+
+  it("edge cases: perfect correlation, tiny n", () => {
+    assert.deepEqual(fisherInterval(1, 50), [1, 1]);
+    assert.deepEqual(fisherInterval(-1, 50), [-1, -1]);
+    assert.equal(fisherInterval(0.5, 3), null);
+  });
+
+  it("is carried on CorrelationStats, null when ρ is", () => {
+    const m = noise(31, 252, 0.02);
+    const e = noise(32, 252, 0.02);
+    const s = correlationStats(m.map((v, i) => v + e[i]!), m.map((v, i) => v - e[i]!), m);
+    assert.ok(s.rawCi95 && s.residualCi95);
+    assert.ok(s.residualCi95[0] <= s.residual! && s.residual! <= s.residualCi95[1]);
+    const tbill = Array.from({ length: 252 }, (_, i) => 0.00016 + (i % 2 ? 1e-6 : -1e-6));
+    const g = correlationStats(tbill, m, m);
+    assert.equal(g.rawCi95, null);
+    assert.equal(g.residualCi95, null);
   });
 });

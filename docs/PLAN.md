@@ -21,7 +21,7 @@ deterministic rules, and the Milestone 1 build order. Anything marked
 | Builder target | Behave like Supertake's builder: named buckets, ~3–21 positions, integer-looking weights, some cash. | Observed in Practice Mode, 7 portfolios. |
 | Weighting | LLM assigns a **conviction tier** per position, a **concentration style**, and a **cash level**; a deterministic rule produces weights. | Reproducible, auditable, less room for hindsight in weights. |
 | Ambiguity | No chat. Thesis stage emits 1–3 candidate interpretations as data; default is the broadest reading. Alternates are shown as labeled sensitivity, never as a swap after seeing returns. | Supertake's "Build it now" picked the broadest reading in both observed cases. The post author is not present to answer questions. |
-| Overlap | Signed. Headline = ex-ante market-adjusted return correlation. Holdings overlap shown as a fact. Self-consistency baseline required. | §5. |
+| Relationship | Three separate dimensions: **thesis alignment** (about the opinions), **portfolio co-movement** (raw ex-ante return correlation primary; residual ρ and β secondary), **holdings overlap** (a fact). They need not agree; mismatches are findings. No verbal strength labels; a direction is stated only when the 95% interval excludes zero. | §5. Revised 2026-10-19 after the first real-data result. |
 | Time gap | Any gap allowed; flag a carried-forward thesis when posts are > 30 days apart; refuse a common window < 20 trading days. | |
 | Cash return | 0%. T-bill exposure, when wanted, is an explicit holding (e.g. SGOV). | Cash = uninvested brokerage balance. |
 
@@ -223,21 +223,64 @@ Property tests: weights sum to `invested` within 1e-9, cash ≥ 5, every
 weight > 0 and ≤ cap, same tier → same weight, and exact point ratios between
 tiers. Rejection codes are checked against an independent computation.
 
-## 5. Overlap and relationship
+## 5. Relationship analysis
 
-Three numbers and one label, each defined before use.
+Three dimensions, each answering a different question. They are computed and
+shown separately, and they need not agree.
 
-1. **Holdings overlap**, a plain fact: `Σ_i min(wA_i, wB_i)` over invested weight, plus the list of shared tickers.
-2. **Ex-ante correlation**, raw and residual. *Which one is the headline is open; see the first real-data result below.*
-   - Estimation window: the 252 daily returns ending on the last trading day **before the cutoff's ET date**, the same boundary as the LookAheadGate. (Revised from "the day before entry", which with T+1 entry would include the post day.)
-   - Portfolio daily return = Σ w_i · r_i, using constant weights over the estimation window (daily-rebalanced to target).
-   - Regress each portfolio's returns on SPY: `r_p = α + β·r_SPY + ε`. Report `corr(ε_A, ε_B)`.
-   - Also report raw correlation and each side's β.
-   - Cash doesn't change correlation: scaling a return series doesn't change ρ. It changes β and volatility.
-3. **Realized correlation** over the backtest window. Secondary, labeled as an outcome.
-4. **Relationship label** (LLM, after freezing): opposing / partly conflicting / compatible / similar / unrelated / unknown. This is about the *theses*, and it's shown separately from the numbers. The two can disagree, and that disagreement is often the insight.
+| Dimension | Question | Source |
+| --- | --- | --- |
+| **Thesis alignment** | Do the original opinions support, contradict, or ignore each other? | LLM, after both portfolios are frozen |
+| **Portfolio co-movement** | Have these hypothetical portfolios historically moved together? | Price data, ex-ante |
+| **Holdings overlap** | Do they own the same things? | Arithmetic on weights |
 
-First real-data result (2026-10-19, 252 days ending 2026-10-16, each side 90% invested):
+**A correlation coefficient is not a measure of agreement between opinions.**
+Two authors can disagree completely while their portfolios co-move: both
+long-only, both riding the market, or the same assets reached from opposite
+reasoning. Two compatible theses can also produce portfolios that move apart.
+Those mismatches are among the most interesting findings this product can
+show, and the comparison should point them out rather than smooth them over.
+
+### 5.1 Thesis alignment
+
+An LLM label on the two *theses*: opposing / partly conflicting / compatible
+/ similar / unrelated / unknown, with a short source-grounded explanation.
+- It runs only after both portfolios are frozen. It sees both posts and both frozen portfolios, never price outcomes.
+- Labels are provisional, and their schema is defined at step 7.
+- It never cites ρ as evidence for or against agreement.
+
+### 5.2 Portfolio co-movement
+
+**Primary: raw ex-ante return correlation.** Market exposure is part of a
+portfolio's economic character, so it isn't removed from the headline.
+
+- Estimation window: the 252 daily returns ending on the last trading day **before the cutoff's ET date**, the same boundary as the LookAheadGate. (Revised from "the day before entry", which with T+1 entry would include the post day.)
+- Portfolio daily return = Σ w_i · r_i, using constant weights over the estimation window (daily-rebalanced to target).
+- Cash doesn't change correlation (scaling a return series doesn't change ρ); it changes β and volatility.
+
+**Secondary, explanatory:**
+- **Market betas:** each side's β to SPY.
+- **Residual correlation:** `corr(ε_A, ε_B)` after `r_p = α + β·r_SPY + ε` on each side. It answers "beyond the overall market, do these move together?"
+- **When raw and residual disagree, explain it.** For example: "these portfolios move in opposite directions mostly because one tends to fall when the market rises." Don't pick one silently.
+
+**Realized correlation** over the backtest window uses the same statistics. It is an outcome, labeled as one.
+
+**No verbal strength labels** ("strong", "weak", "opposed"). Each ρ carries an
+approximate 95% interval from the Fisher transform, `tanh(atanh ρ ± 1.96/√(n−3))`.
+A direction ("tend to move together / apart") is stated only when the interval
+excludes zero. Otherwise: "no clear relationship". The interval assumes
+independent daily returns. Real returns cluster in volatility and have fat
+tails, so it is likely too narrow: a minimum bar for stating a direction, not a
+precise uncertainty. No thresholds beyond this until there's data to calibrate them.
+
+### 5.3 Holdings overlap
+
+A plain fact: `Σ_i min(wA_i, wB_i)` over invested-weight shares (cash
+excluded), plus the list of shared tickers.
+
+### 5.4 First real-data result
+
+2026-10-19, 252 days ending 2026-10-16, each side 90% invested:
 
 | Pair | Holdings overlap | Raw ρ | Residual ρ | β A / β B |
 | --- | --- | --- | --- | --- |
@@ -251,7 +294,10 @@ anti-market trade: each oil name had a negative β (−0.60 to −0.68,
 independently recomputed). So the opposition shows up *through* the market
 factor, and regressing on SPY removes it. Approximate standard error of ρ at
 n = 252 is about 0.06, so a residual of +0.03 is indistinguishable from zero.
-One year and three pairs: this is a counterexample, not a calibration.
+One year and three pairs: this is a counterexample, not a calibration. It is
+why raw ρ, not residual, is the primary co-movement metric.
+
+### 5.5 Guards and self-consistency
 
 Guards:
 - **Coverage:** a name lacking ≥ 90% of the estimation window is excluded from the estimate. If less than 90% of invested weight remains covered → "insufficient history".
@@ -259,7 +305,7 @@ Guards:
 
 **Self-consistency baseline.** Build each take N = 5 times from fresh calls,
 not the cache. Report:
-- mean pairwise holdings overlap and residual ρ within side A;
+- mean pairwise holdings overlap, raw ρ and residual ρ within side A;
 - the same within side B;
 - the same between A and B.
 
@@ -346,4 +392,5 @@ network access, and an uninvestable fixture produces no portfolio.
 5. Calibrating the tier, style and cash tables against more Supertake observations, ideally with per-name weights.
 6. X developer agreement terms for storing and displaying post text.
 7. Price-data licensing for a public demo.
-8. Raw vs. residual correlation as the headline. The first real data contradicted the hypothesis that motivated residual (§5).
+8. Thesis-alignment label set and its eval: how to check the LLM's alignment judgments against human judgment.
+9. Whether the Fisher interval needs a correction for autocorrelated or heteroskedastic returns (e.g. a block bootstrap) before public use.
