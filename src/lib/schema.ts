@@ -123,6 +123,16 @@ export const ThesisAnalysis = z.object({
   economic_claim: z.string().describe("What the post claims, in plain words, without adding anything the post doesn't say."),
   direction: z.enum(["bullish", "bearish", "mixed", "descriptive", "unclear"]),
   subjects: z.array(z.string()).describe("Companies, sectors, asset classes or macro factors the claim is about."),
+  targets: z
+    .array(
+      z.object({
+        ticker: z.string().describe("US ticker as listed, share classes with a dash (BRK-B)."),
+        stance: z.enum(["positive", "negative"]),
+      }),
+    )
+    .describe(
+      "US-listed companies or funds the post itself is positive or negative about, named or unmistakably referred to (\"Microsoft\" -> MSFT). Only the post's own stance, never your inferences. Empty if none.",
+    ),
   horizon: z.string().nullable().describe("Time horizon only if the post states or clearly implies one; otherwise null."),
   missing: z.array(z.string()).describe("What the post leaves unspecified that an investor would need to know."),
   interpretations: z

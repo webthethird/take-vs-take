@@ -63,6 +63,7 @@ function print(rep: ComparisonReport) {
     console.log(`\n--- Post ${s.label}: @${s.post.author_handle}, ${s.post.created_at.slice(0, 10)}  ${s.post.url}`);
     console.log(`  status: ${an.status}  [${an.direction}]  ${an.status_reason}`);
     console.log(`  claim: ${an.economic_claim}`);
+    if (an.targets.length) console.log(`  post's own targets: ${an.targets.map((t) => `${t.ticker} ${t.stance === "negative" ? "−" : "+"}`).join(", ")}`);
     if (interp) console.log(`  built: "${interp.label}"${interp.author_stated ? " (author named these)" : " (AI-inferred)"}. Gap: ${interp.gap_note}`);
     const others = an.interpretations.filter((i) => i.id !== an.default_interpretation);
     if (others.length) console.log(`  other readings not built: ${others.map((i) => i.label).join("; ")}`);
@@ -116,7 +117,8 @@ function print(rep: ComparisonReport) {
     console.log(`\n--- Sensitivity to interpretation (every reading was drafted and frozen before outcomes)`);
     for (const rd of sens.readings) {
       const m = rd.metrics;
-      console.log(`  ${rd.side}:${rd.interpretation_id}${rd.is_default ? "*" : " "} ${rd.label}${rd.author_stated ? "" : " (inferred)"}: ${m ? `${pct(m.cumulativeReturn)}, vol ${m.annualizedVolatility === null ? "n/a" : (m.annualizedVolatility * 100).toFixed(1) + "%"}` : `not backtested (${rd.error})`}`);
+      const conflict = rd.stance_conflicts?.length ? ` [CONTRADICTS POST: holds ${rd.stance_conflicts.join(", ")}]` : "";
+      console.log(`  ${rd.side}:${rd.interpretation_id}${rd.is_default ? "*" : " "} ${rd.label}${rd.author_stated ? "" : " (inferred)"}${conflict}: ${m ? `${pct(m.cumulativeReturn)}, vol ${m.annualizedVolatility === null ? "n/a" : (m.annualizedVolatility * 100).toFixed(1) + "%"}` : `not backtested (${rd.error})`}`);
     }
     for (const s of rep.sides) {
       for (const alt of s.alternates.filter((x) => !x.portfolio)) console.log(`  ${s.label}:${alt.interpretation_id}  draft failed: ${alt.error}`);

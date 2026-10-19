@@ -28,6 +28,7 @@ const goodAnalysis: ThesisAnalysis = {
   economic_claim: "Reshoring will raise US freight volumes, and railroads are an undervalued way to own that.",
   direction: "bullish",
   subjects: ["US railroads", "reshoring"],
+  targets: [],
   horizon: null,
   missing: ["which railroads", "time horizon"],
   interpretations: [{ id: "i1", label: "US Class I railroads", expression: "Own the major US railroads.", author_stated: true, gap_note: "Picks specific railroads." }],
@@ -211,5 +212,13 @@ describe("priceTickerCheck", () => {
     const gate = new LookAheadGate(fixtureSource({ UNP: live }), post);
     const r = await priceTickerCheck(gate, post)(["UNP"]);
     assert.equal(r[0]!.problem, null);
+  });
+});
+
+describe("analysisProblems: targets", () => {
+  it("rejects malformed and duplicate targets", () => {
+    const p = analysisProblems({ ...goodAnalysis, targets: [{ ticker: "Microsoft Corp", stance: "negative" }, { ticker: "unp", stance: "positive" }, { ticker: "UNP", stance: "positive" }] }, input);
+    assert.match(p.join(), /"Microsoft Corp" is not a ticker/);
+    assert.match(p.join(), /UNP is listed twice/);
   });
 });

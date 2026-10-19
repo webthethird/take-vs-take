@@ -48,6 +48,7 @@ const analysis = (claim: string, quote: string): ThesisAnalysis => ({
   economic_claim: claim,
   direction: "bullish",
   subjects: [claim],
+  targets: [],
   horizon: null,
   missing: [],
   interpretations: [{ id: "i1", label: claim, expression: claim, author_stated: true, gap_note: "" }],
@@ -329,5 +330,60 @@ describe("compare: alternate readings", () => {
       ] },
     } as unknown as ComparisonReport;
     assert.deepEqual(findings(rep).filter((x) => x.kind.startsWith("interpretation")), []);
+  });
+});
+
+describe("stance conflicts", () => {
+  const bearish: ThesisAnalysis = {
+    ...analysis("AI capex is wasted", "Buy the railroads."),
+    direction: "bearish",
+    targets: [
+      { ticker: "MSFT", stance: "negative" },
+      { ticker: "GOOG", stance: "negative" },
+      { ticker: "NVDA", stance: "positive" },
+    ],
+  };
+  const holding = (tickers: string[]) =>
+    ({ positions: tickers.map((ticker) => ({ ticker, weight: 10 })), cash_weight: 10 }) as unknown as import("../src/lib/weights.js").Portfolio;
+
+  it("flags holdings the post is negative about, treating share classes as one company", async () => {
+    const { stanceConflicts } = await import("../src/lib/compare.js");
+    assert.deepEqual(stanceConflicts(bearish, holding(["MSFT", "GOOGL", "NVDA", "XLP"])), ["GOOGL", "MSFT"]);
+    assert.deepEqual(stanceConflicts(bearish, holding(["XLP", "NVDA"])), []);
+  });
+
+  it("states the conflict as a finding, headline or alternative", () => {
+    const rep = {
+      sides: [
+        {
+          label: "A",
+          analysis: { ...bearish, interpretations: [{ id: "i1", label: "Outside AI" }, { id: "i3", label: "Core businesses" }], default_interpretation: "i1" },
+          portfolio: holding(["XLP"]),
+          alternates: [{ interpretation_id: "i3", portfolio: holding(["MSFT", "GOOGL", "AMZN"]), error: null }],
+        },
+      ],
+      alignment: null, holdings_overlap: null, co_movement: null, sensitivity: null,
+    } as unknown as ComparisonReport;
+    const f = findings(rep).filter((x) => x.kind === "stance_conflict");
+    assert.equal(f.length, 1);
+    assert.match(f[0]!.text, /An alternative reading of post A \("Core businesses"\) holds GOOGL, MSFT, which the post itself is negative about/);
+  });
+
+  it("the real pipeline carries conflicts on each reading", async () => {
+    const twoBear: ThesisAnalysis = {
+      ...bearish,
+      interpretations: [
+        { id: "i1", label: "Rails", expression: "rails", author_stated: false, gap_note: "" },
+        { id: "i2", label: "Core businesses", expression: "own them anyway", author_stated: false, gap_note: "" },
+      ],
+    };
+    data.MSFT = data.FA!;
+    const { deps } = await setup([twoBear, draft(["RA", "RB", "RC", "RD"]), draft(["MSFT", "FB", "FC", "FD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment]);
+    const r = await compare(deps, postA, postB);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    if (!r.ok) return;
+    const alt = r.value.sensitivity!.readings.find((x) => x.side === "A" && x.interpretation_id === "i2")!;
+    assert.deepEqual(alt.stance_conflicts, ["MSFT"]);
+    assert.ok(r.value.findings.some((f) => f.kind === "stance_conflict"));
   });
 });

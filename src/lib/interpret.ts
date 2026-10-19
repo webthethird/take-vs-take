@@ -23,7 +23,7 @@ import { CASH, STYLE, TIER_POINTS, weightPortfolio, type Portfolio } from "./wei
 import { structuredCall, type CallResult, type LlmConfig, type LlmError } from "./llm.js";
 import type { z } from "zod";
 
-export const ANALYZE_PROMPT_VERSION = "analyze-v1";
+export const ANALYZE_PROMPT_VERSION = "analyze-v2";
 export const DRAFT_PROMPT_VERSION = "draft-v1";
 export const MAX_REPAIRS = 2;
 
@@ -48,6 +48,10 @@ When the status is not investable, return empty interpretations and a null defau
 ## Evidence
 
 Quote the words that carry the claim exactly as written, as complete phrases. Never paraphrase inside "evidence", never join separate passages, and never use ellipses. Code checks every quote against the post.
+
+## Targets
+
+List the US-listed companies or funds the post itself takes a stance on, with that stance: "Microsoft is wasting money on AI" makes MSFT negative; "Long $NVDA" makes NVDA positive. Include a company the post names or unmistakably refers to, even without a ticker. Don't list companies only you connect to the claim, and don't list private companies. This records what the author said, independent of any portfolio built later.
 
 ## Interpretations
 
@@ -166,6 +170,13 @@ export function analysisProblems(a: ThesisAnalysis, input: ThesisInput): string[
   const source = norm([input.text, ...input.context.map((c) => c.text)].join("\n"));
   for (const q of a.evidence) {
     if (!source.includes(norm(q))) problems.push(`Evidence is not a verbatim quote from the post: "${q}"`);
+  }
+  const seen = new Set<string>();
+  for (const t of a.targets) {
+    const k = tickerKey(t.ticker);
+    if (!/^[A-Z0-9]+(-[A-Z0-9]+)*$/.test(k)) problems.push(`Target "${t.ticker}" is not a ticker.`);
+    if (seen.has(k)) problems.push(`Target ${k} is listed twice.`);
+    seen.add(k);
   }
   if (a.status === "investable") {
     if (a.evidence.length === 0) problems.push("An investable status needs at least one evidence quote.");

@@ -43,6 +43,7 @@ import { LookAheadGate, etDate, type PriceSeries, type PriceSource } from "./pri
 import { err, type Result } from "./result.js";
 import { ThesisAlignment, type PostInput, type ThesisAnalysis } from "./schema.js";
 import { WEIGHT_RULE_VERSION, type Portfolio } from "./weights.js";
+import { companyKey } from "./ticker.js";
 
 export const BENCHMARK = "SPY";
 /// All current Claude models (models overview page, checked 2026-10-19).
@@ -110,6 +111,8 @@ export type ReadingResult = {
   label: string;
   is_default: boolean;
   author_stated: boolean;
+  /// Holdings the post itself is negative about (see stanceConflicts).
+  stance_conflicts: string[];
   /// Null when the reading couldn't be backtested; never silently dropped.
   metrics: BacktestResult["metrics"] | null;
   error: string | null;
@@ -271,7 +274,7 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
     for (const f of abstained) {
       report.findings.push({ kind: "abstention", text: `Post ${f.label} was judged ${f.analysis.status.replace("_", " ")}: ${f.analysis.status_reason} No portfolio was built for it.` });
     }
-    await writeFile(join(dir, "report.json"), JSON.stringify(report, null, 2));
+    await writeReport(dir, report);
     return { ok: true, value: report };
   }
   const pa = fa.portfolio!;
@@ -332,8 +335,26 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
   };
   report.sensitivity = sensitivity(fa, fb, series, bench, w.value, cutoff.toISOString());
   report.findings = findings(report);
-  await writeFile(join(dir, "report.json"), JSON.stringify(report, null, 2));
+  await writeReport(dir, report);
   return { ok: true, value: report };
+}
+
+/// report.json is the latest; each distinct pair of frozen runs also keeps
+/// its own file, so a rerun with new prompts doesn't erase the old result.
+async function writeReport(dir: string, report: ComparisonReport) {
+  const body = JSON.stringify(report, null, 2);
+  await writeFile(join(dir, `report-${report.sides.map((s) => s.run_id).join("-")}.json`), body);
+  await writeFile(join(dir, "report.json"), body);
+}
+
+/// Tickers a portfolio holds that its own post is negative about. The post's
+/// targets are declared at analysis time, before any portfolio exists, so the
+/// comparison can't be shaped by the holdings. Share classes count as one
+/// company. ETF look-through is not done: an ETF containing a target isn't
+/// flagged.
+export function stanceConflicts(analysis: ThesisAnalysis, portfolio: Portfolio): string[] {
+  const negative = new Set(analysis.targets.filter((t) => t.stance === "negative").map((t) => companyKey(t.ticker)));
+  return portfolio.positions.filter((p) => negative.has(companyKey(p.ticker))).map((p) => p.ticker).sort();
 }
 
 function readingsOf(f: FrozenRun): { id: string; portfolio: Portfolio }[] {
@@ -355,6 +376,7 @@ export function sensitivity(fa: FrozenRun, fb: FrozenRun, series: PriceSeries[],
         label: i.label,
         is_default: r.id === f.analysis.default_interpretation,
         author_stated: i.author_stated,
+        stance_conflicts: stanceConflicts(f.analysis, r.portfolio),
         metrics: b.ok ? b.value.metrics : null,
         error: b.ok ? null : `${b.error}: ${b.message}`,
       });
@@ -400,6 +422,21 @@ export function findings(r: ComparisonReport): Finding[] {
   }
   if (opposed && r.holdings_overlap && r.holdings_overlap.shared.length > 0) {
     out.push({ kind: "shared_holdings", text: `The opinions conflict, yet both portfolios hold ${r.holdings_overlap.shared.map((s) => s.ticker).join(", ")}.` });
+  }
+  for (const s of r.sides ?? []) {
+    const readings = [
+      ...(s.portfolio ? [{ id: s.analysis.default_interpretation!, portfolio: s.portfolio, headline: true }] : []),
+      ...(s.alternates ?? []).flatMap((x) => (x.portfolio ? [{ id: x.interpretation_id, portfolio: x.portfolio, headline: false }] : [])),
+    ];
+    for (const rd of readings) {
+      const c = stanceConflicts(s.analysis, rd.portfolio);
+      if (c.length === 0) continue;
+      const name = s.analysis.interpretations.find((i) => i.id === rd.id)?.label ?? rd.id;
+      out.push({
+        kind: "stance_conflict",
+        text: `${rd.headline ? "The headline" : "An alternative"} reading of post ${s.label} ("${name}") holds ${c.join(", ")}, which the post itself is negative about. It contradicts the post's stance and should not be read as the author's view.`,
+      });
+    }
   }
   const sens = r.sensitivity?.pairs ?? [];
   const directions = new Set(sens.map((p) => p.ex_ante_direction));
