@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-// Data contracts. See docs/PLAN.md §3. Only the ingestion-side schemas exist so
-// far; analysis, portfolio and run-record schemas land with their stages.
+// Data contracts. See docs/PLAN.md §3. Analysis and run-record schemas land
+// with their stages.
 
 export const PostSource = z.enum([
   "fixture_manual", // text pasted by a person; not fetched from X
@@ -54,3 +54,39 @@ export const ManualFixture = z.object({
   note: z.string().optional(),
 });
 export type ManualFixture = z.infer<typeof ManualFixture>;
+
+// ── Portfolio draft (LLM output) ─────────────────────────────────────────
+//
+// The model chooses discrete labels only — style, cash level, a tier per
+// position. It never emits a weight; src/lib/weights.ts computes those.
+
+export const Concentration = z.enum(["concentrated", "balanced", "diversified"]);
+export type Concentration = z.infer<typeof Concentration>;
+
+export const CashLevel = z.enum(["buffer", "standard", "defensive", "majority"]);
+export type CashLevel = z.infer<typeof CashLevel>;
+
+export const Tier = z.enum(["core", "supporting", "satellite"]);
+export type Tier = z.infer<typeof Tier>;
+
+export const DraftPosition = z.object({
+  ticker: z.string().min(1),
+  role: z.string().describe("2–4 words, e.g. 'Waymo owner'."),
+  bucket: z.string(),
+  rationale: z.string(),
+  tier: Tier,
+});
+export type DraftPosition = z.infer<typeof DraftPosition>;
+
+export const PortfolioDraft = z.object({
+  interpretation_id: z.string(),
+  title: z.string(),
+  long_only_note: z.string(),
+  exclusions: z.array(z.string()),
+  concentration: Concentration,
+  cash_level: CashLevel,
+  cash_reason: z.string(),
+  buckets: z.array(z.object({ name: z.string(), rationale: z.string() })),
+  positions: z.array(DraftPosition),
+});
+export type PortfolioDraft = z.infer<typeof PortfolioDraft>;

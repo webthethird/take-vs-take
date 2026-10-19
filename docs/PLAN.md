@@ -170,12 +170,29 @@ bucket level, so expect to tune.
 
 ### Algorithm
 
-1. Validate: position count is within the style's range; no duplicate tickers; every position's bucket exists.
+1. Validate: position count is within the style's range; no duplicate tickers (share-class spellings normalised); bucket names unique; every position's bucket exists; no empty buckets.
 2. `invested = 100 − cash`.
-3. Per-point unit `u = invested / Σ points`; tier weight `w_t = points_t × u`.
-4. Cap: if the highest uncapped tier's weight exceeds the cap, fix that tier at the cap and recompute `u` over the remaining tiers. Repeat.
-5. Infeasible if every tier is capped and `Σ weights < invested`; equivalently `n × cap < invested`. Reject; don't silently raise cash.
+3. Reject as `infeasible` if `n × cap < invested`: even equal weights breach the cap.
+4. Per-point unit `u = invested / Σ points`; tier weight `w_t = points_t × u`.
+5. Reject as `cap_exceeded` if the top tier's weight exceeds the cap.
 6. Bucket weight = sum of its positions.
+
+**The cap is a validity bound, not an adjustment.** Tier weights are always in
+exact 3:2:1 ratio. Rejections never get fixed up silently: raising cash,
+relaxing the cap or re-tiering would each change the model's interpretation.
+The error messages say what the model could change, for a retry.
+
+*Revision (2026-10-19):* the first version clipped the top tier to the cap and
+re-split the excess among the tiers below. That erased conviction: concentrated
+style, buffer cash, 1 core / 2 supporting / 1 satellite came out 25 / 25 / 25 / 20.
+Even a single clip distorts the ratios; 2 core / 2 satellite came out 25 / 22.5,
+which is 1.1:1 for a draft that said 3:1.
+
+Cost of the strict rule: if tiers were assigned at random, the cap would reject
+about 44–52% of concentrated drafts at buffer/standard cash, about 16–21% of
+balanced drafts, and none of the diversified ones. That's a simulation, not LLM
+behavior. Measure the real rejection and retry rates at step 7 before tuning
+the tables.
 
 **Weights are exact rationals, not rounded.** The backtest uses exact weights.
 Display rounds each tier weight to one decimal, the same for every name in the tier,
@@ -195,13 +212,16 @@ ever need integer display; it just breaks that invariant.
 | Case | Input | Expected |
 | --- | --- | --- |
 | Diversified, standard cash | 4 core, 6 supp, 8 sat; cash 10 | core 8.4375, supp 5.625, sat 2.8125; sum 90 |
-| Cap binds | concentrated, buffer cash; 2 core, 2 sat | u = 95/8 → core 35.6 > 25 → core = 25 each; sats share 45 → 22.5 each |
+| Cap would bind | concentrated, buffer cash; 2 core, 2 sat | u = 95/8 → core 35.6 > 25 → reject `cap_exceeded` |
+| Flattening case | concentrated, buffer; 1 core, 2 supp, 1 sat | core 35.6 > 25 → reject; same draft at majority cash → 20.625 / 13.75 / 6.875 |
+| Exactly at cap | concentrated, defensive; 3 core | 25 each, accepted |
 | Barbell | concentrated, majority cash; 2 core, 1 sat | u = 55/7 → core 23.57, sat 7.86; no cap binds |
-| Infeasible | concentrated, buffer cash; 3 core | 3 × 25 = 75 < 95 → reject |
+| Infeasible | concentrated, buffer cash; 3 core | 3 × 25 = 75 < 95 → reject `infeasible` |
 | Single tier | balanced, 10 core | equal weight |
 
 Property tests: weights sum to `invested` within 1e-9, cash ≥ 5, every
-weight > 0 and ≤ cap, and same tier → same weight.
+weight > 0 and ≤ cap, same tier → same weight, and exact point ratios between
+tiers. Rejection codes are checked against an independent computation.
 
 ## 5. Overlap and relationship
 
