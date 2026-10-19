@@ -228,14 +228,30 @@ tiers. Rejection codes are checked against an independent computation.
 Three numbers and one label, each defined before use.
 
 1. **Holdings overlap**, a plain fact: `Σ_i min(wA_i, wB_i)` over invested weight, plus the list of shared tickers.
-2. **Ex-ante residual correlation**, the headline:
-   - Estimation window: the 252 trading days ending the day before entry. No outcome data.
+2. **Ex-ante correlation**, raw and residual. *Which one is the headline is open; see the first real-data result below.*
+   - Estimation window: the 252 daily returns ending on the last trading day **before the cutoff's ET date**, the same boundary as the LookAheadGate. (Revised from "the day before entry", which with T+1 entry would include the post day.)
    - Portfolio daily return = Σ w_i · r_i, using constant weights over the estimation window (daily-rebalanced to target).
    - Regress each portfolio's returns on SPY: `r_p = α + β·r_SPY + ε`. Report `corr(ε_A, ε_B)`.
    - Also report raw correlation and each side's β.
    - Cash doesn't change correlation: scaling a return series doesn't change ρ. It changes β and volatility.
 3. **Realized correlation** over the backtest window. Secondary, labeled as an outcome.
 4. **Relationship label** (LLM, after freezing): opposing / partly conflicting / compatible / similar / unrelated / unknown. This is about the *theses*, and it's shown separately from the numbers. The two can disagree, and that disagreement is often the insight.
+
+First real-data result (2026-10-19, 252 days ending 2026-10-16, each side 90% invested):
+
+| Pair | Holdings overlap | Raw ρ | Residual ρ | β A / β B |
+| --- | --- | --- | --- | --- |
+| Oil (XOM, CVX, COP) vs clean energy (ICLN, ENPH, FSLR) | 0 | −0.16 | +0.03 | −0.58 / 1.83 |
+| NVDA vs AMD | 0 | +0.51 | +0.20 | 1.70 / 2.89 |
+| NVDA vs XOM | 0 | −0.23 | −0.02 | 1.70 / −0.60 |
+
+The oil vs clean-energy hypothesis (raw positive, residual negative) was
+**wrong**; the observed pattern is the reverse. In this window oil was the
+anti-market trade: each oil name had a negative β (−0.60 to −0.68,
+independently recomputed). So the opposition shows up *through* the market
+factor, and regressing on SPY removes it. Approximate standard error of ρ at
+n = 252 is about 0.06, so a residual of +0.03 is indistinguishable from zero.
+One year and three pairs: this is a counterexample, not a calibration.
 
 Guards:
 - **Coverage:** a name lacking ≥ 90% of the estimation window is excluded from the estimate. If less than 90% of invested weight remains covered → "insufficient history".
@@ -330,4 +346,4 @@ network access, and an uninvestable fixture produces no portfolio.
 5. Calibrating the tier, style and cash tables against more Supertake observations, ideally with per-name weights.
 6. X developer agreement terms for storing and displaying post text.
 7. Price-data licensing for a public demo.
-8. Whether residual correlation behaves as hoped on real pairs. Hypothesis: oil vs. clean energy is positive raw and negative residual. Test it in step 6 with real data.
+8. Raw vs. residual correlation as the headline. The first real data contradicted the hypothesis that motivated residual (§5).
