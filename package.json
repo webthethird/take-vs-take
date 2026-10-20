@@ -5,6 +5,9 @@
   "description": "Two X posts in, two hypothetical portfolios out, compared fairly over a common window.",
   "type": "module",
   "scripts": {
+    "dev": "next dev -H 127.0.0.1",
+    "build": "next build",
+    "start": "next start -H 127.0.0.1",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test 'test/**/*.test.ts'",
     "prices": "tsx src/cli/prices.ts",
@@ -14,10 +17,15 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
+    "next": "16.3.8",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   }

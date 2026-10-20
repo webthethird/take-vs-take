@@ -13,3 +13,5 @@ dist/
 
 # Real post text: kept out of git until X storage/display terms are checked
 fixtures/private/
+next-env.d.ts
+*.tsbuildinfo

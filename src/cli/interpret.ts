@@ -13,7 +13,7 @@ import { basename } from "node:path";
 import { z } from "zod";
 import { analyzeThesis, draftPortfolio, priceTickerCheck, type Attempt } from "../lib/interpret.js";
 import { anthropicTransport, ledgerTotal, type LlmConfig } from "../lib/llm.js";
-import { LookAheadGate, cachedSource } from "../lib/prices.js";
+import { LookAheadGate } from "../lib/prices.js";
 import { ThesisInput } from "../lib/schema.js";
 import { tiingoSource } from "../lib/tiingo.js";
 import { round1 } from "../lib/weights.js";
@@ -50,7 +50,7 @@ const cfg: LlmConfig = {
   ledgerPath: ".cache/llm-ledger.jsonl",
 };
 const tiingo = tiingoSource({ token: process.env.TIINGO_API_TOKEN ?? "" });
-const prices = cachedSource(tiingo, ".cache/prices");
+const prices = tiingo;
 
 const spentBefore = await ledgerTotal(cfg.ledgerPath);
 const cost = (as: Attempt[]) => as.reduce((s, a) => s + a.cost_usd, 0);

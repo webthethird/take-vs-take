@@ -1,21 +1,27 @@
 // Compare two posts end to end and print the result.
 //
-//   pnpm compare fixtures/private/pair-01-a.json fixtures/private/pair-01-b.json
+//   pnpm compare [--alternates] fixtures/private/pair-01-a.json fixtures/private/pair-01-b.json
 //
-// Writes frozen runs and report.json under .cache/runs/compare-<id>/.
-// Real model calls are capped by LLM_BUDGET_USD; Tiingo by a shared
-// hourly quota. Both are cached, so a rerun after a limit is cheap.
+// --alternates also drafts every non-default reading (sensitivity; costs more).
+//
+// Writes the frozen runs under .cache/runs/compare-<id>/; the report is only
+// printed. Real model calls are capped by LLM_BUDGET_USD and cached, so a
+// rerun after a limit doesn't pay again. Prices are not cached (Tiingo's
+// Starter terms forbid storing them), so every run refetches them, within a
+// shared hourly quota.
 
 import { compare, type ComparisonReport } from "../lib/compare.js";
 import { loadFixture } from "../lib/fixture.js";
 import { anthropicTransport } from "../lib/llm.js";
-import { cachedSource } from "../lib/prices.js";
 import { tiingoSource } from "../lib/tiingo.js";
 import { round1 } from "../lib/weights.js";
 
-const [fa, fb] = process.argv.slice(2);
-if (!fa || !fb) {
-  console.error("usage: pnpm compare <fixtureA.json> <fixtureB.json>");
+const args = process.argv.slice(2);
+const alternates = args.includes("--alternates");
+const files = args.filter((a) => !a.startsWith("--"));
+const [fa, fb] = files;
+if (!fa || !fb || files.length !== 2) {
+  console.error("usage: pnpm compare [--alternates] <fixtureA.json> <fixtureB.json>");
   process.exit(2);
 }
 try {
@@ -35,18 +41,19 @@ const tiingo = tiingoSource({ token: process.env.TIINGO_API_TOKEN ?? "", request
 const r = await compare(
   {
     llm: { transport: anthropicTransport(), budgetUsd: budget, cacheDir: ".cache/llm", ledgerPath: ".cache/llm-ledger.jsonl" },
-    prices: cachedSource(tiingo, ".cache/prices"),
+    prices: tiingo,
     outDir: ".cache/runs",
+    alternates,
   },
   a.value,
   b.value,
 );
 if (!r.ok) {
-  console.error(`FAILED ${r.error}: ${r.message}\n(Tiingo requests this run: ${tiingo.requests}. Completed LLM steps are cached; rerunning resumes.)`);
+  console.error(`FAILED ${r.error}: ${r.message}\n(Tiingo requests this run: ${tiingo.requests}. Completed LLM steps are cached; rerunning doesn't pay for them again.)`);
   process.exit(1);
 }
 print(r.value);
-console.log(`\nTiingo requests this run: ${tiingo.requests}. Report: .cache/runs/compare-${r.value.comparison_id}/report.json`);
+console.log(`\nTiingo requests this run: ${tiingo.requests}. Frozen runs: .cache/runs/compare-${r.value.comparison_id}/`);
 
 function pct(x: number): string {
   return `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;

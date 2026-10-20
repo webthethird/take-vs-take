@@ -1,0 +1,363 @@
+"use client";
+// Client component: runs in the browser. It only talks to /api/compare and
+// imports types (erased at build) from the pipeline, never its code.
+
+import { useState } from "react";
+import type { CompareEvent, PostView, ReportView } from "../lib/api.js";
+import type { FrozenRun, Stage } from "../lib/compare.js";
+import type { DemoPair } from "../server/posts.js";
+
+const COLORS = { A: "#2563eb", B: "#d97706", SPY: "#6b7280" };
+
+const STAGES: { key: string; label: string }[] = [
+  { key: "analyze:A", label: "Read post A" },
+  { key: "draft:A", label: "Build portfolio A" },
+  { key: "analyze:B", label: "Read post B" },
+  { key: "draft:B", label: "Build portfolio B" },
+  { key: "frozen", label: "Freeze both portfolios" },
+  { key: "align", label: "Compare the opinions" },
+  { key: "prices", label: "Load prices" },
+  { key: "backtest", label: "Backtest and compare" },
+];
+// Server messages carry UTC ISO timestamps; show them in the viewer's time.
+const localTimes = (m: string) =>
+  m.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g, (t) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+const stageKey = (s: Stage) => ("side" in s ? `${s.stage}:${s.side}` : s.stage);
+
+type Result = Extract<CompareEvent, { type: "result" }>;
+
+export function Comparer({ pairs }: { pairs: DemoPair[] }) {
+  const [a, setA] = useState("");
+  const [b, setB] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [stages, setStages] = useState<string[]>([]);
+  const [result, setResult] = useState<Result | null>(null);
+  const [error, setError] = useState<{ message: string; side?: string } | null>(null);
+
+  async function run(urlA = a, urlB = b) {
+    setBusy(true);
+    setStages([]);
+    setResult(null);
+    setError(null);
+    try {
+      const res = await fetch("/api/compare", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ a: urlA, b: urlB }) });
+      if (!res.ok || !res.body) {
+        const e = (await res.json().catch(() => null)) as CompareEvent | null;
+        setError(e?.type === "error" ? { message: e.message, side: e.side } : { message: `Request failed (${res.status}).` });
+        return;
+      }
+      // Read the NDJSON stream line by line as it arrives.
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buf = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += value;
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const ev = JSON.parse(buf.slice(0, nl)) as CompareEvent;
+          buf = buf.slice(nl + 1);
+          if (ev.type === "stage") setStages((s) => [...s, stageKey(ev.stage)]);
+          else if (ev.type === "result") setResult(ev);
+          else setError({ message: ev.message, side: ev.side });
+        }
+      }
+    } catch (e) {
+      setError({ message: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <section className="inputs">
+        {pairs.length > 0 && (
+          <div className="examples">
+            <span>Examples:</span>
+            {pairs.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                disabled={busy}
+                title={`${p.a_label} vs. ${p.b_label}`}
+                onClick={() => {
+                  setA(p.a_url);
+                  setB(p.b_url);
+                  void run(p.a_url, p.b_url);
+                }}
+              >
+                {p.subject}
+              </button>
+            ))}
+          </div>
+        )}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void run();
+          }}
+        >
+          <label className={error?.side === "a" || error?.side === "both" ? "bad" : ""}>
+            First take (X URL)
+            <input value={a} onChange={(e) => setA(e.target.value)} placeholder="https://x.com/…/status/…" disabled={busy} />
+          </label>
+          <label className={error?.side === "b" || error?.side === "both" ? "bad" : ""}>
+            Second take (X URL)
+            <input value={b} onChange={(e) => setB(e.target.value)} placeholder="https://x.com/…/status/…" disabled={busy} />
+          </label>
+          <button type="submit" disabled={busy || !a || !b}>
+            {busy ? "Comparing…" : "Compare"}
+          </button>
+        </form>
+        {error && <p className="error">{localTimes(error.message)}</p>}
+        {(busy || (stages.length > 0 && !result)) && (
+          <ol className="stages">
+            {STAGES.filter((s) => stages.includes(s.key) || busy).map((s) => {
+              const i = stages.indexOf(s.key);
+              // The last stage reached is the one in progress, or the one that failed.
+              const last = i === stages.length - 1;
+              const state = i < 0 ? "todo" : last && busy ? "doing" : last && error ? "failed" : "done";
+              return (
+                <li key={s.key} className={state}>
+                  {s.label}
+                </li>
+              );
+            })}
+          </ol>
+        )}
+      </section>
+      {result && <Report report={result.report} posts={result.posts} />}
+    </>
+  );
+}
+
+// ── Report ───────────────────────────────────────────────────────────────
+
+const pct = (x: number, digits = 1) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(digits)}%`;
+const words = (s: string) => s.replace(/_/g, " ");
+const round1 = (x: number) => Math.round(x * 10 + 1e-9) / 10;
+
+function Report({ report, posts }: { report: ReportView; posts: { A: PostView; B: PostView } }) {
+  const [sa, sb] = report.sides as [FrozenRun, FrozenRun];
+  const bt = report.backtests;
+  return (
+    <div className="report">
+      <section className="caveats">
+        {report.caveats.map((c) => (
+          <p key={c}>{c}</p>
+        ))}
+      </section>
+
+      <section className="sides">
+        <SideCard side={sa} post={posts.A} color={COLORS.A} ret={bt?.a.metrics.cumulativeReturn} />
+        <SideCard side={sb} post={posts.B} color={COLORS.B} ret={bt?.b.metrics.cumulativeReturn} />
+      </section>
+
+      {bt && report.window && (
+        <section>
+          <h2>Hypothetical performance</h2>
+          <p className="muted">
+            $10,000 each, bought at the close on {report.window.entry} (the first trading day after the later post) and held to {report.window.end}. Dividends
+            reinvested, cash earns 0%, no fees. An outcome over one period, not a verdict on either opinion.
+          </p>
+          <table className="metrics">
+            <thead>
+              <tr>
+                <th />
+                <th>Return</th>
+                <th>Max drawdown</th>
+                <th>Volatility (annualized)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(
+                [
+                  ["A", bt.a],
+                  ["B", bt.b],
+                  ["SPY", bt.benchmark],
+                ] as const
+              ).map(([name, r]) => (
+                <tr key={name}>
+                  <td>
+                    <i className="dot" style={{ background: COLORS[name] }} /> {name}
+                  </td>
+                  <td>{pct(r.metrics.cumulativeReturn)}</td>
+                  <td>{(r.metrics.maxDrawdown * 100).toFixed(1)}%</td>
+                  <td>{r.metrics.annualizedVolatility === null ? "n/a" : `${(r.metrics.annualizedVolatility * 100).toFixed(1)}%`}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      <Comparison report={report} />
+
+      {report.findings.length > 0 && (
+        <section>
+          <h2>What stands out</h2>
+          <ul className="findings">
+            {report.findings.map((f) => (
+              <li key={f.text}>{f.text}</li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <footer className="muted">
+        <p>
+          Data sourced by <a href="https://www.tiingo.com">Tiingo</a>. Only summary results are shown; no daily prices or value series.
+        </p>
+        Comparison {report.comparison_id} · model cost ${report.llm_cost_usd.toFixed(2)} (0 when replayed from cache) · versions{" "}
+        {Object.entries(report.versions)
+          .map(([k, v]) => `${k} ${v}`)
+          .join(", ")}
+      </footer>
+    </div>
+  );
+}
+
+function SideCard({ side, post, color, ret }: { side: FrozenRun; post: PostView; color: string; ret?: number }) {
+  const an = side.analysis;
+  const reading = an.interpretations.find((i) => i.id === an.default_interpretation);
+  const p = side.portfolio;
+  return (
+    <article className="side" style={{ borderTopColor: color }}>
+      <header>
+        <h2 style={{ color }}>Post {side.label}</h2>
+        <a href={side.post.url} target="_blank" rel="noreferrer">
+          @{side.post.author_handle}
+        </a>
+        <span className="muted"> · {side.post.created_at.slice(0, 10)}</span>
+      </header>
+      <blockquote>{post.text}</blockquote>
+      {!post.text_verified && <p className="muted small">Saved copy of the post, not fetched from X.</p>}
+      {side.post.attachments.length > 0 && <p className="muted small">The post includes {side.post.attachments.join(" and ")} the model could not see.</p>}
+
+      <h3>What the post claims</h3>
+      <p>
+        <span className={`tag ${an.direction}`}>{an.direction}</span> {an.economic_claim}
+      </p>
+
+      {!p && (
+        <div className="abstain">
+          <strong>No portfolio: {words(an.status)}.</strong> {an.status_reason}
+        </div>
+      )}
+
+      {p && reading && (
+        <>
+          <h3>How it was turned into a portfolio</h3>
+          <p>
+            <strong>{reading.label}</strong> <span className="tag">{reading.author_stated ? "the post names these" : "AI-inferred"}</span>
+          </p>
+          {reading.gap_note && <p className="muted small">Beyond the post: {reading.gap_note}</p>}
+          {p.long_only_note && <p className="muted small">Long-only: {p.long_only_note}</p>}
+          <table className="holdings">
+            <tbody>
+              {p.buckets.map((bk) => (
+                <BucketRows key={bk.name} bucket={bk} positions={p.positions.filter((x) => x.bucket === bk.name)} />
+              ))}
+              <tr className="cash">
+                <td>Cash</td>
+                <td className="muted small">{p.cash_reason}</td>
+                <td>{p.cash_weight}%</td>
+              </tr>
+            </tbody>
+          </table>
+          {ret !== undefined && (
+            <p className="small">
+              Hypothetical return over the window: <strong>{pct(ret)}</strong>
+            </p>
+          )}
+        </>
+      )}
+    </article>
+  );
+}
+
+function BucketRows({ bucket, positions }: { bucket: { name: string; weight: number }; positions: { ticker: string; weight: number; role: string }[] }) {
+  return (
+    <>
+      <tr className="bucket">
+        <td colSpan={2}>{bucket.name}</td>
+        <td>{round1(bucket.weight)}%</td>
+      </tr>
+      {positions.map((x) => (
+        <tr key={x.ticker}>
+          <td className="ticker">{x.ticker}</td>
+          <td className="muted small">{x.role}</td>
+          <td>{round1(x.weight)}%</td>
+        </tr>
+      ))}
+    </>
+  );
+}
+
+function Comparison({ report }: { report: ReportView }) {
+  const al = report.alignment?.value;
+  const h = report.holdings_overlap;
+  const cm = report.co_movement;
+  const ex = cm?.ex_ante;
+  const ci = (c: [number, number] | null) => (c ? `95% interval ${c[0].toFixed(2)} to ${c[1].toFixed(2)}` : "");
+  const explain = (d: string | null | undefined) =>
+    d === "together" ? "tended to rise and fall together" : d === "apart" ? "tended to move in opposite directions" : "showed no clear relationship (the interval includes zero)";
+  if (!al && !h && !cm) return null;
+  return (
+    <section>
+      <h2>How the two takes relate</h2>
+      <p className="muted">Three separate questions. They don't have to agree, and when they don't, that's the interesting part.</p>
+      <div className="facts">
+        <div className="fact">
+          <h3>Do the opinions agree?</h3>
+          {al ? (
+            <>
+              <p className="big">{words(al.relationship)}</p>
+              <p className="small">{al.reasoning}</p>
+              <p className="muted small">Judged by the model from the two posts alone ({al.confidence} confidence). It never saw the portfolios or prices.</p>
+            </>
+          ) : (
+            <p className="muted">Unavailable.</p>
+          )}
+        </div>
+        <div className="fact">
+          <h3>Do the portfolios hold the same things?</h3>
+          {h ? (
+            <>
+              <p className="big">{Math.round(h.overlap * 100)}% overlap</p>
+              <p className="small">{h.shared.length ? `Both hold ${h.shared.map((s) => s.ticker).join(", ")}.` : "No holdings in common."}</p>
+              <p className="muted small">Share of invested weight held in common (the smaller weight of each shared ticker, summed).</p>
+            </>
+          ) : (
+            <p className="muted">Not computed: a side has no portfolio.</p>
+          )}
+        </div>
+        <div className="fact">
+          <h3>Do they move together?</h3>
+          {ex && ex.raw !== null ? (
+            <>
+              <p className="big">{words(cm!.ex_ante_direction ?? "unavailable")}</p>
+              <p className="small">
+                In the year before the posts, the two portfolios' daily returns {explain(cm!.ex_ante_direction)}: correlation {ex.raw.toFixed(2)}, {ci(ex.rawCi95)}.
+              </p>
+              {ex.residual !== null && (
+                <p className="small">
+                  Beyond the overall market (betas {ex.a.beta.toFixed(2)} and {ex.b.beta.toFixed(2)}): correlation {ex.residual.toFixed(2)}, {ci(ex.residualCi95)}.
+                </p>
+              )}
+              {cm!.realized && cm!.realized.raw !== null && (
+                <p className="muted small">
+                  Over the comparison window itself: {cm!.realized.raw.toFixed(2)} ({words(cm!.realized_direction ?? "n/a")}). Shown for reference; it uses the
+                  outcome period.
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="muted">{cm?.ex_ante_error ?? "Not computed: a side has no portfolio."}</p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}

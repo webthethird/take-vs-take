@@ -136,6 +136,17 @@ describe("selfConsistency", () => {
     assert.equal(t.requests.length, 12);
   });
 
+  it("stores only the frozen samples, nothing derived from prices", async () => {
+    const { deps } = await setup([A, RAILS, A, RAILS, B, TRUCKS, B, TRUCKS].map(ok));
+    const r = await selfConsistency(deps, postA, postB, 2);
+    assert.ok(r.ok && r.value.between.length === 4);
+    const { readdir, readFile } = await import("node:fs/promises");
+    const files = (await readdir(deps.outDir, { recursive: true })).filter((f) => f.endsWith(".json"));
+    assert.ok(files.length > 0);
+    assert.ok(files.every((f) => !/report/.test(f)), files.join(", "));
+    for (const f of files) assert.doesNotMatch(await readFile(join(deps.outDir, f), "utf8"), /adjClose|cumulativeReturn|"values"|ex_ante/);
+  });
+
   it("samples differ only by cache key: the model sees identical prompts", async () => {
     const { deps, t } = await setup([A, RAILS, A, RAILS, B, TRUCKS, B, TRUCKS].map(ok));
     await selfConsistency(deps, postA, postB, 2);

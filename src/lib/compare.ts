@@ -159,15 +159,23 @@ export type CompareError = "analysis_failed" | "draft_failed" | "price_error" | 
 
 export type CompareDeps = {
   llm: LlmConfig;
-  /// Raw (cached) price source. compare() wraps it in its own gate.
+  /// Raw price source. compare() wraps it in its own gate.
   prices: PriceSource;
   outDir: string;
   now?: () => Date;
   /// Last trading day to evaluate through; defaults to the benchmark's latest.
   end?: string;
-  /// Draft every reading, not just the default (default true).
+  onStage?: (s: Stage) => void;
+  /// Also draft every non-default reading, for sensitivity analysis.
+  /// Off by default: it multiplies cost, and it's a diagnostic, not the
+  /// headline.
   alternates?: boolean;
 };
+
+/// Progress, for a UI. Purely informational: nothing depends on it.
+export type Stage =
+  | { stage: "analyze" | "draft"; side: "A" | "B" }
+  | { stage: "frozen" | "align" | "prices" | "backtest" };
 
 const shift = (d: string, days: number) => new Date(Date.parse(`${d}T12:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 
@@ -189,6 +197,7 @@ export async function buildSide(
 ): Promise<SideResult> {
   const input = toThesisInput(post);
   const nonce = opts.nonce;
+  deps.onStage?.({ stage: "analyze", side: label });
   const a = await analyzeThesis(deps.llm, input, { nonce });
   if (!a.ok) return { ...err("analysis_failed", `Side ${label}: ${a.error}: ${a.message}`), cause: a.error, attempts: a.attempts };
   const analysis = a.value.analysis;
@@ -198,13 +207,14 @@ export async function buildSide(
   }
   const asOf = new Date(post.created_at);
   const check = priceTickerCheck(gate, asOf);
+  deps.onStage?.({ stage: "draft", side: label });
   const d = await draftPortfolio(deps.llm, input, analysis, analysis.default_interpretation, check, { nonce });
   if (!d.ok) return { ...err("draft_failed", `Side ${label}: ${d.error}: ${d.message}`), cause: d.error, attempts: [...a.attempts, ...d.attempts] };
   const attempts = [...a.attempts, ...d.attempts];
 
   // Every other reading, drafted now, so all are frozen together.
   const alternates: Alternate[] = [];
-  if (deps.alternates ?? true) {
+  if (deps.alternates ?? false) {
     for (const i of analysis.interpretations) {
       if (i.id === analysis.default_interpretation) continue;
       const x = await draftPortfolio(deps.llm, input, analysis, i.id, check, { nonce });
@@ -251,6 +261,8 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
     return err("freeze_error", `Could not write frozen runs: ${(e as Error).message}`);
   }
   const [fa, fb] = frozen as [FrozenRun, FrozenRun];
+  deps.onStage?.({ stage: "frozen" });
+  deps.onStage?.({ stage: "align" });
 
   // Thesis alignment: after freezing, about the opinions only.
   let alignment: ComparisonReport["alignment"] = null;
@@ -288,7 +300,6 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
     for (const f of abstained) {
       report.findings.push({ kind: "abstention", text: `Post ${f.label} was judged ${f.analysis.status.replace("_", " ")}: ${f.analysis.status_reason} No portfolio was built for it.` });
     }
-    await writeReport(dir, report);
     return { ok: true, value: report };
   }
   const pa = fa.portfolio!;
@@ -298,6 +309,7 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
   const u = gate.unlock(frozen.map((f) => ({ run_id: f.run_id, frozen_at: f.frozen_at })), now());
   if (!u.ok) return err("freeze_error", u.message);
 
+  deps.onStage?.({ stage: "prices" });
   const cutoffDay = etDate(cutoff);
   const start = shift(cutoffDay, -400);
   const end = deps.end ?? etDate(now());
@@ -324,6 +336,7 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
     caveats.push(`Both posts postdate the interpretation model's training cutoff (${MODEL_TRAINING_CUTOFF}), so the model could not have learned the outcome window during training.`);
   }
 
+  deps.onStage?.({ stage: "backtest" });
   const side = (p: Portfolio) => ({ holdings: p.positions.map((x) => ({ ticker: x.ticker, weight: x.weight })), cashWeight: p.cash_weight });
   const bt = (p: Portfolio) => backtest({ ...side(p), prices: series, window: w.value });
   const ba = bt(pa);
@@ -349,16 +362,10 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
   };
   report.sensitivity = sensitivity(fa, fb, series, bench, w.value, cutoff.toISOString());
   report.findings = findings(report);
-  await writeReport(dir, report);
+  // The report is returned, never written: everything from step 3 on is
+  // derived from price data, which Tiingo's Starter terms (1.6(a)) don't
+  // allow us to keep. The frozen runs above contain no prices.
   return { ok: true, value: report };
-}
-
-/// report.json is the latest; each distinct pair of frozen runs also keeps
-/// its own file, so a rerun with new prompts doesn't erase the old result.
-async function writeReport(dir: string, report: ComparisonReport) {
-  const body = JSON.stringify(report, null, 2);
-  await writeFile(join(dir, `report-${report.sides.map((s) => s.run_id).join("-")}.json`), body);
-  await writeFile(join(dir, "report.json"), body);
 }
 
 /// Tickers a portfolio holds that its own post is negative about. The post's

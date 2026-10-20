@@ -11,7 +11,6 @@
 import { selfConsistency, DEFAULT_SAMPLES, type ConsistencyReport } from "../lib/consistency.js";
 import { loadFixture } from "../lib/fixture.js";
 import { anthropicTransport, ledgerTotal } from "../lib/llm.js";
-import { cachedSource } from "../lib/prices.js";
 import { tiingoSource } from "../lib/tiingo.js";
 import { round1 } from "../lib/weights.js";
 
@@ -44,7 +43,7 @@ const tiingo = tiingoSource({ token: process.env.TIINGO_API_TOKEN ?? "", request
 const r = await selfConsistency(
   {
     llm: { transport: anthropicTransport(), budgetUsd: budget, cacheDir: ".cache/llm", ledgerPath },
-    prices: cachedSource(tiingo, ".cache/prices"),
+    prices: tiingo,
     outDir: ".cache/runs",
   },
   a.value,
@@ -57,7 +56,7 @@ if (!r.ok) {
   process.exit(1);
 }
 print(r.value);
-console.log(`\nLLM spend this run: $${spent.toFixed(4)}. Tiingo requests: ${tiingo.requests}. Report: .cache/runs/consistency-${r.value.comparison_id}/report.json`);
+console.log(`\nLLM spend this run: $${spent.toFixed(4)}. Tiingo requests: ${tiingo.requests}. Samples: .cache/runs/consistency-${r.value.comparison_id}/samples.json`);
 
 function pct(x: number): string {
   return `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;

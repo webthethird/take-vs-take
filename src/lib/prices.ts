@@ -122,6 +122,9 @@ export function fixtureSource(
 // A cached series is a pinned input, not a convenience: rerunning a pinned
 // comparison must read the same bars. That means an entry for a range ending
 // "today" is not refreshed automatically. Pass refresh to re-fetch.
+//
+// Not wired into the app or CLIs: Tiingo's Starter plan forbids storing its
+// data (Terms 1.6(a)). Kept, tested, for a plan or provider that allows it.
 
 export function cachedSource(inner: PriceSource, dir: string, opts: { refresh?: boolean } = {}): PriceSource & { hits: number; misses: number } {
   const pathFor = (ticker: string, start: string, end: string) => {

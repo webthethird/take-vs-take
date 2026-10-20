@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -128,6 +128,24 @@ describe("compare", () => {
     assert.ok(rep.caveats.some((c) => /postdate the interpretation model's training cutoff/.test(c)));
   });
 
+  it("stores nothing derived from prices: only the frozen runs", async () => {
+    const { deps } = await setup(happy);
+    const r = await compare(deps, postA, postB);
+    assert.ok(r.ok && r.value.backtests);
+    const files = await readdir(deps.outDir, { recursive: true });
+    assert.deepEqual(files.filter((f) => f.endsWith(".json")).map((f) => f.split(/[\\/]/).pop()).sort(), ["frozen-a.json", "frozen-b.json"]);
+    for (const f of files.filter((f) => f.endsWith(".json"))) {
+      assert.doesNotMatch(await readFile(join(deps.outDir, f), "utf8"), /adjClose|cumulativeReturn|"values"/);
+    }
+  });
+
+  it("reports stages in pipeline order", async () => {
+    const { deps } = await setup(happy);
+    const stages: string[] = [];
+    await compare({ ...deps, onStage: (s) => stages.push("side" in s ? `${s.stage}:${s.side}` : s.stage) }, postA, postB);
+    assert.deepEqual(stages, ["analyze:A", "draft:A", "analyze:B", "draft:B", "frozen", "align", "prices", "backtest"]);
+  });
+
   it("alignment sees both posts but no authors and no portfolios", async () => {
     const { deps, t } = await setup(happy);
     await compare(deps, postA, postB);
@@ -215,7 +233,7 @@ describe("compare: alternate readings", () => {
   it("drafts and freezes every reading before outcomes, and reports sensitivity", async () => {
     // A: i1 = rails, i2 = the same trucks B holds. B: trucks.
     const { deps, t } = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), draft(["TA", "TB", "TC", "TD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment]);
-    const r = await compare(deps, postA, postB);
+    const r = await compare({ ...deps, alternates: true }, postA, postB);
     assert.ok(r.ok, !r.ok ? r.message : "");
     if (!r.ok) return;
     assert.equal(t.requests.length, 6);
@@ -240,7 +258,7 @@ describe("compare: alternate readings", () => {
 
   it("an alternate holding tickers no other portfolio holds is fetched and backtested", async () => {
     const { deps, reads } = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), draft(["FA", "FB", "FC", "FD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment]);
-    const r = await compare(deps, postA, postB);
+    const r = await compare({ ...deps, alternates: true }, postA, postB);
     assert.ok(r.ok, !r.ok ? r.message : "");
     if (!r.ok) return;
     assert.ok(reads.some((x) => x.ticker === "FA" && x.end >= "2026-07-16"));
@@ -252,8 +270,8 @@ describe("compare: alternate readings", () => {
   it("the frozen run id covers the alternates", async () => {
     const x = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), draft(["FA", "FB", "FC", "FD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment]);
     const y = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), draft(["TA", "TB", "TC", "TD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment]);
-    const rx = await compare(x.deps, postA, postB);
-    const ry = await compare(y.deps, postA, postB);
+    const rx = await compare({ ...x.deps, alternates: true }, postA, postB);
+    const ry = await compare({ ...y.deps, alternates: true }, postA, postB);
     assert.ok(rx.ok && ry.ok);
     if (rx.ok && ry.ok) {
       assert.deepEqual(rx.value.sides[0]!.portfolio, ry.value.sides[0]!.portfolio);
@@ -264,7 +282,7 @@ describe("compare: alternate readings", () => {
   it("a failed alternate is recorded, not fatal", async () => {
     const tooBig = draft(["RA", "RB"]); // 2 positions: under the concentrated minimum of 3
     const { deps } = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), tooBig, tooBig, tooBig, analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment]);
-    const r = await compare(deps, postA, postB);
+    const r = await compare({ ...deps, alternates: true }, postA, postB);
     assert.ok(r.ok, !r.ok ? r.message : "");
     if (!r.ok) return;
     const alt = r.value.sides[0]!.alternates[0]!;
@@ -273,11 +291,12 @@ describe("compare: alternate readings", () => {
     assert.equal(r.value.sensitivity!.pairs.length, 1);
   });
 
-  it("alternates can be switched off", async () => {
+  it("alternates are off by default", async () => {
     const { deps, t } = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment]);
-    const r = await compare({ ...deps, alternates: false }, postA, postB);
-    assert.ok(r.ok);
+    const r = await compare(deps, postA, postB);
+    assert.ok(r.ok, !r.ok ? r.message : "");
     assert.equal(t.requests.length, 5);
+    if (r.ok) assert.deepEqual(r.value.sides[0]!.alternates, []);
   });
 
   it("flags when the co-movement direction depends on the reading", () => {
@@ -379,7 +398,7 @@ describe("stance conflicts", () => {
     };
     data.MSFT = data.FA!;
     const { deps } = await setup([twoBear, draft(["RA", "RB", "RC", "RD"]), draft(["MSFT", "FB", "FC", "FD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment]);
-    const r = await compare(deps, postA, postB);
+    const r = await compare({ ...deps, alternates: true }, postA, postB);
     assert.ok(r.ok, !r.ok ? r.message : "");
     if (!r.ok) return;
     const alt = r.value.sensitivity!.readings.find((x) => x.side === "A" && x.interpretation_id === "i2")!;
