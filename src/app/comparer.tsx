@@ -6,6 +6,7 @@ import { useState } from "react";
 import type { CompareEvent, PostView, ReportView } from "../lib/api.js";
 import type { FrozenRun, Stage } from "../lib/compare.js";
 import type { DemoPair } from "../server/posts.js";
+import { PerformanceChart } from "./chart.js";
 
 const COLORS = { A: "#2563eb", B: "#d97706", SPY: "#6b7280" };
 
@@ -161,6 +162,23 @@ function Report({ report, posts }: { report: ReportView; posts: { A: PostView; B
             $10,000 each, bought at the close on {report.window.entry} (the first trading day after the later post) and held to {report.window.end}. Dividends
             reinvested, cash earns 0%, no fees. An outcome over one period, not a verdict on either opinion.
           </p>
+          <PerformanceChart
+            series={(
+              [
+                ["A", bt.a.chart],
+                ["B", bt.b.chart],
+              ] as const
+            ).flatMap(([name, values]) => (values ? [{ name, color: COLORS[name], values }] : []))}
+          />
+          {(["A", "B"] as const)
+            .filter((name) => !bt[name === "A" ? "a" : "b"].chart)
+            .map((name) => (
+              <p key={name} className="muted small">
+                {name} isn&apos;t charted: it holds a single security, so its value line would just be that security&apos;s price history, which the data
+                license doesn&apos;t allow showing. Its summary figures are below.
+              </p>
+            ))}
+          <p className="muted small">Weekly points. SPY is not charted for the same reason; its figures are in the table.</p>
           <table className="metrics">
             <thead>
               <tr>
@@ -207,7 +225,7 @@ function Report({ report, posts }: { report: ReportView; posts: { A: PostView; B
 
       <footer className="muted">
         <p>
-          Data sourced by <a href="https://www.tiingo.com">Tiingo</a>. Only summary results are shown; no daily prices or value series.
+          Data sourced by <a href="https://www.tiingo.com">Tiingo</a>. Shown: summary figures, and weekly portfolio values for portfolios of two or more holdings. No prices.
         </p>
         Comparison {report.comparison_id} · model cost ${report.llm_cost_usd.toFixed(2)} (0 when replayed from cache) · versions{" "}
         {Object.entries(report.versions)

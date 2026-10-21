@@ -86,7 +86,13 @@ table { border-collapse: collapse; width: 100%; }
 .holdings .ticker { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; padding-left: 12px; }
 .holdings tr.cash td { font-weight: 600; padding-top: 10px; }
 
-.dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; }
+.chart { margin: 12px 0 4px; }
+.chart svg { width: 100%; height: auto; display: block; }
+.chart .grid { stroke: var(--line); }
+.chart .baseline { stroke: var(--muted); stroke-dasharray: 2 4; }
+.chart .axis { fill: var(--muted); font-size: 11px; }
+.chart figcaption { display: flex; gap: 16px; font-size: 13px; }
+.legend i, .dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; }
 .metrics th, .metrics td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
 .metrics th:first-child, .metrics td:first-child { text-align: left; }
 .metrics th { font-weight: 500; color: var(--muted); font-size: 13px; }
