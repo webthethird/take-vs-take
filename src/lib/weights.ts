@@ -22,16 +22,29 @@ export { tickerKey } from "./ticker.js";
 
 /// Recorded in every frozen run so a later change to any table below can't
 /// silently reinterpret an old result.
-export const WEIGHT_RULE_VERSION = "tiers-v1";
+export const WEIGHT_RULE_VERSION = "tiers-v2";
 
 // All three tables are provisional: fitted to 7 observed Supertake
 // portfolios, mostly at bucket level.
 
-export const STYLE: Record<Concentration, { min: number; max: number; cap: number }> = {
+export const STYLE: Record<Exclude<Concentration, "named">, { min: number; max: number; cap: number }> = {
   concentrated: { min: 3, max: 8, cap: 25 },
   balanced: { min: 8, max: 15, cap: 15 },
   diversified: { min: 15, max: 25, cap: 12 },
 };
+
+/// For readings built from what the author named (developer's decision,
+/// 2026-10-21): as concentrated as the post, but never one holding, so the
+/// portfolio can still be charted under the data license. The cap is a share
+/// of invested weight, matching the chart rule in server/view.ts. With 3:2:1
+/// tiers, two holdings split at most 75/25, so the cap can only bind if the
+/// tier ratios ever change.
+export const NAMED = { min: 2, max: 8, capShare: 0.8 };
+
+/// Style bounds with the cap in percentage points of the whole portfolio.
+export function styleBounds(c: Concentration, invested: number): { min: number; max: number; cap: number } {
+  return c === "named" ? { min: NAMED.min, max: NAMED.max, cap: NAMED.capShare * invested } : STYLE[c];
+}
 
 export const CASH: Record<CashLevel, number> = {
   buffer: 5,
@@ -95,7 +108,9 @@ export function tierWeights(
 }
 
 export function weightPortfolio(draft: PortfolioDraft): Result<Portfolio, WeightError> {
-  const style = STYLE[draft.concentration];
+  const cash = CASH[draft.cash_level];
+  const invested = 100 - cash;
+  const style = styleBounds(draft.concentration, invested);
   const n = draft.positions.length;
 
   if (n < style.min || n > style.max) {
@@ -129,8 +144,6 @@ export function weightPortfolio(draft: PortfolioDraft): Result<Portfolio, Weight
     }
   }
 
-  const cash = CASH[draft.cash_level];
-  const invested = 100 - cash;
   const counts: Partial<Record<Tier, number>> = {};
   for (const p of draft.positions) counts[p.tier] = (counts[p.tier] ?? 0) + 1;
 
@@ -140,7 +153,7 @@ export function weightPortfolio(draft: PortfolioDraft): Result<Portfolio, Weight
   if (n * style.cap < invested - EPS) {
     return fail(
       "infeasible",
-      `${n} positions capped at ${style.cap}% hold at most ${n * style.cap}%, but ${invested}% must be invested. ` +
+      `${n} positions capped at ${round1(style.cap)}% hold at most ${round1(n * style.cap)}%, but ${invested}% must be invested. ` +
         `Add positions or choose a higher cash level.`,
     );
   }
@@ -149,7 +162,7 @@ export function weightPortfolio(draft: PortfolioDraft): Result<Portfolio, Weight
   if (tw[top]! > style.cap + EPS) {
     return fail(
       "cap_exceeded",
-      `Each ${top} position would weigh ${round1(tw[top]!)}%, over the ${style.cap}% cap for ${draft.concentration} portfolios. ` +
+      `Each ${top} position would weigh ${round1(tw[top]!)}%, over the ${round1(style.cap)}% cap for ${draft.concentration} portfolios. ` +
         `Add positions, choose a higher cash level, or move some ${top} names to a lower tier.`,
     );
   }

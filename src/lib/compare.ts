@@ -23,6 +23,7 @@ import {
 import { toThesisInput } from "./fixture.js";
 import {
   ANALYZE_PROMPT_VERSION,
+  DRAFT_NAMED_PROMPT_VERSION,
   DRAFT_PROMPT_VERSION,
   analyzeThesis,
   draftPortfolio,
@@ -342,7 +343,8 @@ export async function buildSide(
 export function freeze(side: Side, now: Date): FrozenRun {
   const versions = {
     analyze: ANALYZE_PROMPT_VERSION,
-    draft: DRAFT_PROMPT_VERSION,
+    // The version actually used: author-named readings have their own.
+    draft: side.attempts.find((x) => x.prompt_version.startsWith("draft"))?.prompt_version ?? DRAFT_PROMPT_VERSION,
     weights: WEIGHT_RULE_VERSION,
     default_rule: DEFAULT_RULE_VERSION,
     model: side.attempts[0]?.model_requested ?? "unknown",
@@ -431,7 +433,7 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
   const report: ComparisonReport = {
     comparison_id,
     created_at: now().toISOString(),
-    versions: { analyze: ANALYZE_PROMPT_VERSION, draft: DRAFT_PROMPT_VERSION, align: ALIGN_PROMPT_VERSION, drivers: DRIVERS_PROMPT_VERSION, fidelity: FIDELITY_PROMPT_VERSION, default_rule: DEFAULT_RULE_VERSION, weights: WEIGHT_RULE_VERSION, backtest: BACKTEST_VERSION, overlap: OVERLAP_VERSION },
+    versions: { analyze: ANALYZE_PROMPT_VERSION, draft: DRAFT_PROMPT_VERSION, draft_named: DRAFT_NAMED_PROMPT_VERSION, align: ALIGN_PROMPT_VERSION, drivers: DRIVERS_PROMPT_VERSION, fidelity: FIDELITY_PROMPT_VERSION, default_rule: DEFAULT_RULE_VERSION, weights: WEIGHT_RULE_VERSION, backtest: BACKTEST_VERSION, overlap: OVERLAP_VERSION },
     sides: frozen,
     alignment,
     drivers,

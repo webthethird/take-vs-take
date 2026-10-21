@@ -178,8 +178,8 @@ function Report({ report, posts }: { report: ReportView; posts: { A: PostView; B
             .filter((name) => !bt[name === "A" ? "a" : "b"].chart)
             .map((name) => (
               <p key={name} className="muted small">
-                {name} isn&apos;t charted: it holds a single security, so its value line would just be that security&apos;s price history, which the data
-                license doesn&apos;t allow showing. Its summary figures are below.
+                {name} isn&apos;t charted: it holds a single security, or one holding is over 80% of it, so its value line would be close to that
+                security&apos;s price history, which the data license doesn&apos;t allow showing. Its summary figures are below.
               </p>
             ))}
           <p className="muted small">Weekly points. SPY is not charted for the same reason; its figures are in the table.</p>

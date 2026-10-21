@@ -221,7 +221,7 @@ describe("properties", () => {
   it("holds for 5,000 random drafts", () => {
     const rand = mulberry32(20261019);
     const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)]!;
-    const styles = Object.keys(STYLE) as Concentration[];
+    const styles = [...Object.keys(STYLE), "named"] as Concentration[];
     const cashLevels = Object.keys(CASH) as CashLevel[];
     const tiers = Object.keys(TIER_POINTS) as Tier[];
     let feasible = 0;
@@ -231,10 +231,11 @@ describe("properties", () => {
     for (let i = 0; i < 5000; i++) {
       const style = pick(styles);
       const cash = pick(cashLevels);
-      const { min, max, cap } = STYLE[style];
+      const invested = 100 - CASH[cash];
+      // Restated here rather than read from NAMED, so the test checks the rule.
+      const { min, max, cap } = style === "named" ? { min: 2, max: 8, cap: 0.8 * invested } : STYLE[style];
       const n = min + Math.floor(rand() * (max - min + 1));
       const d = draft(style, cash, Array.from({ length: n }, () => pick(tiers)), ["A", "B", "C"].slice(0, Math.min(3, n)));
-      const invested = 100 - CASH[cash];
       const r = weightPortfolio(d);
       const label = `#${i} ${style}/${cash}/n=${n}`;
 
@@ -320,5 +321,20 @@ describe("display", () => {
   it("displayTotal is 100 when nothing needs rounding", () => {
     const p = ok(draft("balanced", "standard", repeat([["core", 10]])));
     assert.equal(displayTotal(p), 100);
+  });
+});
+
+describe("named style", () => {
+  it("allows two holdings, capped at 80% of invested weight", () => {
+    const r = weightPortfolio(draft("named", "standard", repeat([["core", 1], ["satellite", 1]]), ["A"]));
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    if (!r.ok) return;
+    assert.deepEqual(r.value.positions.map((p) => p.weight), [67.5, 22.5]);
+    assert.equal(r.value.cap, 72);
+  });
+
+  it("never allows a single holding", () => {
+    const r = weightPortfolio(draft("named", "standard", repeat([["core", 1]]), ["A"]));
+    assert.ok(!r.ok && r.error === "count_out_of_range");
   });
 });

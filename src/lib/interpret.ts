@@ -19,12 +19,15 @@ import {
   type ThesisInput,
 } from "./schema.js";
 import { tickerKey } from "./ticker.js";
-import { CASH, STYLE, TIER_POINTS, weightPortfolio, type Portfolio } from "./weights.js";
+import { CASH, NAMED, STYLE, TIER_POINTS, weightPortfolio, type Portfolio } from "./weights.js";
 import { structuredCall, type CallResult, type LlmConfig, type LlmError } from "./llm.js";
 import type { z } from "zod";
 
 export const ANALYZE_PROMPT_VERSION = "analyze-v2";
 export const DRAFT_PROMPT_VERSION = "draft-v1";
+/// Author-named readings: the same prompt plus the "named" style. A separate
+/// version, so inferred readings keep their exact prompt and cached drafts.
+export const DRAFT_NAMED_PROMPT_VERSION = "draft-named-v1";
 export const MAX_REPAIRS = 2;
 
 // ── Prompts ──────────────────────────────────────────────────────────────
@@ -105,6 +108,15 @@ Code then sets weights: the invested share (100% minus cash) is split in proport
 }
 
 export const DRAFT_SYSTEM = draftSystem();
+
+export const DRAFT_NAMED_SYSTEM = `${DRAFT_SYSTEM}
+
+## This reading uses what the author named
+
+The interpretation you're given is built from securities the post itself names, so one more concentration style is available, and usually fits best:
+- named: ${NAMED.min}–${NAMED.max} positions, at most ${NAMED.capShare * 100}% of the invested share in any one name.
+
+Hold the named securities as core. A portfolio needs at least ${NAMED.min} positions, so if the post names only one investable security, add the single closest stand-in for the rest of the post's claim (for example, something it names that can't be bought directly), in a lower tier, and say in its rationale that it is a stand-in. Don't pad with funds that merely contain the named stock.`;
 
 function renderPost(input: ThesisInput): string {
   const d = new Date(input.created_at);
@@ -279,12 +291,17 @@ export async function draftPortfolio(
   let unavailable: string | null = null;
   const r = await callWithRepair(
     cfg,
-    { promptVersion: DRAFT_PROMPT_VERSION, system: DRAFT_SYSTEM, schema: PortfolioDraft, nonce: opts.nonce },
+    interp.author_stated
+      ? { promptVersion: DRAFT_NAMED_PROMPT_VERSION, system: DRAFT_NAMED_SYSTEM, schema: PortfolioDraft, nonce: opts.nonce }
+      : { promptVersion: DRAFT_PROMPT_VERSION, system: DRAFT_SYSTEM, schema: PortfolioDraft, nonce: opts.nonce },
     user,
     async (d) => {
       // The id is ours to set, not the model's.
       const draft = { ...d, interpretation_id: interpretationId };
       const problems: string[] = [];
+      if (draft.concentration === "named" && !interp.author_stated) {
+        problems.push('The "named" style is only for readings built from what the author named. Choose concentrated, balanced or diversified.');
+      }
       const w = weightPortfolio(draft);
       if (!w.ok) problems.push(w.message);
       for (const c of await checkTickers(draft.positions.map((p) => p.ticker))) {

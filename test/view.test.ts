@@ -16,9 +16,9 @@ const bt = (v: number): BacktestResult => ({
   metrics: { cumulativeReturn: 0.0002, maxDrawdown: 0, annualizedVolatility: null, tradingDays: 10 },
   flags: [],
 });
-const side = (label: "A" | "B", tickers: string[]) => ({
+const side = (label: "A" | "B", tickers: string[], weights = tickers.map(() => 90 / tickers.length)) => ({
   label,
-  portfolio: { positions: tickers.map((ticker) => ({ ticker, weight: 90 / tickers.length })) },
+  portfolio: { positions: tickers.map((ticker, i) => ({ ticker, weight: weights[i]! })) },
 });
 const report = (a: string[], b: string[]) =>
   ({
@@ -38,6 +38,14 @@ describe("reportView", () => {
     assert.equal(v.backtests!.b.chart, null, "one security plus cash is that security's price path");
     assert.equal(v.backtests!.benchmark.chart, null);
     assert.deepEqual(v.backtests!.b.metrics, report([], []).backtests!.b.metrics);
+  });
+
+  it("doesn't chart a portfolio one holding dominates (over 80% of invested weight)", () => {
+    const r = (w: number[]) =>
+      reportView({ ...report([], []), sides: [side("A", ["TSLA", "UFO"], w), side("B", ["X", "Y"])] } as unknown as ComparisonReport).backtests!.a.chart;
+    assert.equal(r([75, 15]), null, "75 of 90 is 83%");
+    assert.ok(r([72, 18]), "72 of 90 is exactly 80%");
+    assert.ok(r([67.5, 22.5]));
   });
 
   it("never sends the trading calendar, per-holding values or daily series", () => {

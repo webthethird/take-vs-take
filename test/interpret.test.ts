@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import {
+  DRAFT_NAMED_PROMPT_VERSION,
+  DRAFT_NAMED_SYSTEM,
   DRAFT_SYSTEM,
   MAX_REPAIRS,
   analysisProblems,
@@ -182,6 +184,29 @@ describe("draftPortfolio", () => {
     }
     assert.equal(t.requests.length, 1); // the model was never told to replace CSX
     assert.equal(r.attempts.length, 1); // its cost is still reported
+  });
+
+  it("drafts author-named readings with their own prompt, which offers the named style", async () => {
+    const two = draft([["UNP", "core"], ["CSX", "satellite"]], { concentration: "named" });
+    const { cfg, t } = await cfgWith([two]);
+    const r = await draftPortfolio(cfg, input, goodAnalysis, "i1", allValid);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    if (!r.ok) return;
+    assert.equal(t.requests[0]!.system, DRAFT_NAMED_SYSTEM);
+    assert.equal(r.value.attempts[0]!.prompt_version, DRAFT_NAMED_PROMPT_VERSION);
+    assert.deepEqual(r.value.portfolio.positions.map((p) => p.weight), [67.5, 22.5]);
+  });
+
+  it("keeps inferred readings on the original prompt and refuses them the named style", async () => {
+    const inferred: ThesisAnalysis = { ...goodAnalysis, interpretations: [{ ...goodAnalysis.interpretations[0]!, author_stated: false }] };
+    const two = draft([["UNP", "core"], ["CSX", "satellite"]], { concentration: "named" });
+    const fixed = draft([["UNP", "core"], ["CSX", "core"], ["NSC", "core"], ["CP", "core"]]);
+    const { cfg, t } = await cfgWith([two, fixed]);
+    const r = await draftPortfolio(cfg, input, inferred, "i1", allValid);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    assert.equal(t.requests[0]!.system, DRAFT_SYSTEM);
+    assert.doesNotMatch(DRAFT_SYSTEM, /named:/);
+    assert.match(JSON.stringify(t.requests[1]!.messages.at(-1)), /only for readings built from what the author named/);
   });
 
   it("won't draft for an abstaining analysis or an unknown interpretation", async () => {

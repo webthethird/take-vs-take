@@ -63,7 +63,9 @@ export type ManualFixture = z.infer<typeof ManualFixture>;
 // The model chooses discrete labels only — style, cash level, a tier per
 // position. It never emits a weight; src/lib/weights.ts computes those.
 
-export const Concentration = z.enum(["concentrated", "balanced", "diversified"]);
+/// "named" is only for readings built from what the author named (see
+/// weights.ts NAMED); code rejects it for any other reading.
+export const Concentration = z.enum(["concentrated", "balanced", "diversified", "named"]);
 export type Concentration = z.infer<typeof Concentration>;
 
 export const CashLevel = z.enum(["buffer", "standard", "defensive", "majority"]);
