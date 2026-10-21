@@ -3,10 +3,10 @@ import { access, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
-import { compare, findings, type ComparisonReport } from "../src/lib/compare.js";
+import { DRIVERS_SYSTEM, compare, findings, type ComparisonReport } from "../src/lib/compare.js";
 import type { LlmConfig } from "../src/lib/llm.js";
 import { fixtureSource, type PriceBar, type PriceSource } from "../src/lib/prices.js";
-import { PostInput, type PortfolioDraft, type ThesisAlignment, type ThesisAnalysis } from "../src/lib/schema.js";
+import { PostInput, type PortfolioDraft, type SharedDrivers, type ThesisAlignment, type ThesisAnalysis } from "../src/lib/schema.js";
 import { scripted } from "./llm.test.js";
 
 // ── Synthetic world ──────────────────────────────────────────────────────
@@ -68,6 +68,13 @@ const draft = (tickers: string[]): PortfolioDraft => ({
   positions: tickers.map((ticker) => ({ ticker, role: "r", bucket: "B", rationale: "", tier: "core" as const })),
 });
 const alignment: ThesisAlignment = { a_claim: "rails", b_claim: "trucks", shared_subjects: ["reshoring"], reasoning: "They back rival modes.", relationship: "opposing", confidence: "medium" };
+const drivers: SharedDrivers = {
+  shared: [{ driver: "US freight volumes", a: "railroads haul it", b: "truckers haul it" }],
+  differences: [{ driver: "diesel prices", a: "minor cost", b: "major cost" }],
+  expected_daily_co_movement: "together",
+  summary: "Both are bets on US freight volumes; they differ on which mode wins.",
+  confidence: "medium",
+};
 
 const dirs: string[] = [];
 after(async () => {
@@ -105,6 +112,7 @@ const happy = [
   analysis("trucks", "Buy the truckers."),
   draft(["TA", "TB", "TC", "TD"]),
   alignment,
+  drivers,
 ];
 
 describe("compare", () => {
@@ -153,7 +161,7 @@ describe("compare", () => {
     const { deps } = await setup(happy);
     const stages: string[] = [];
     await compare({ ...deps, onStage: (s) => stages.push("side" in s ? `${s.stage}:${s.side}` : s.stage) }, postA, postB);
-    assert.deepEqual(stages, ["analyze:A", "draft:A", "analyze:B", "draft:B", "frozen", "align", "prices", "backtest"]);
+    assert.deepEqual(stages, ["analyze:A", "draft:A", "analyze:B", "draft:B", "frozen", "align", "drivers", "prices", "backtest"]);
   });
 
   it("alignment sees both posts but no authors and no portfolios", async () => {
@@ -172,6 +180,54 @@ describe("compare", () => {
     await compare(deps, postA, postB);
     for (const i of [0, 1]) assert.doesNotMatch(JSON.stringify(t.requests[i]!.messages), /truckers/);
     for (const i of [2, 3]) assert.doesNotMatch(JSON.stringify(t.requests[i]!.messages), /railroads/);
+  });
+
+  it("reads shared drivers after freezing, before prices, from holdings alone", async () => {
+    const { deps, t, reads } = await setup(happy);
+    const transport = deps.llm.transport;
+    let readsAtDrivers = -1;
+    const r = await compare(
+      {
+        ...deps,
+        llm: {
+          ...deps.llm,
+          transport: {
+            async call(req) {
+              if (req.system === DRIVERS_SYSTEM) {
+                readsAtDrivers = reads.length;
+                const sub = (await readdir(deps.outDir))[0]!;
+                await access(join(deps.outDir, sub, "frozen-b.json"));
+              }
+              return transport.call(req);
+            },
+          },
+        },
+      },
+      postA,
+      postB,
+    );
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    if (!r.ok) return;
+    // No outcome price had been read when the drivers call was made.
+    assert.ok(readsAtDrivers >= 0);
+    assert.ok(reads.slice(0, readsAtDrivers).every((x) => x.end < "2026-07-16"));
+    const msg = JSON.stringify(t.requests.find((q) => q.system === DRIVERS_SYSTEM)!.messages);
+    assert.match(msg, /RA .*TA/);
+    assert.doesNotMatch(msg, /alice_author|bob_author|2026-0/);
+    assert.deepEqual(r.value.drivers?.value, drivers);
+    assert.equal(r.value.versions.drivers, "drivers-v1");
+    assert.ok(r.value.findings.some((f) => f.kind === "drivers_expected" || f.kind === "drivers_unexpected"));
+  });
+
+  it("carries on with a caveat when the drivers call fails", async () => {
+    // An output that doesn't match the schema, standing in for any model failure.
+    const { deps } = await setup([...happy.slice(0, -1), { unexpected: true }]);
+    const r = await compare(deps, postA, postB);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    if (!r.ok) return;
+    assert.equal(r.value.drivers, null);
+    assert.ok(r.value.backtests);
+    assert.ok(r.value.caveats.some((c) => /Shared-drivers reading unavailable/.test(c)));
   });
 
   it("an abstaining side stops before any outcome is read", async () => {
@@ -222,6 +278,15 @@ describe("findings", () => {
     assert.ok(f.some((x) => x.kind === "market_explains" && /betas 1\.10 and -0\.60/.test(x.text)));
   });
 
+  it("sets the drivers reading's expectation beside the measured direction", () => {
+    const withDrivers = (e: SharedDrivers["expected_daily_co_movement"]) => ({ drivers: { value: { ...drivers, expected_daily_co_movement: e }, cost_usd: 0, cached: true } });
+    const hit = findings(base({ ...withDrivers("together"), co_movement: cm([0.2, 0.4], [0.1, 0.3]) }));
+    assert.ok(hit.some((x) => x.kind === "drivers_expected" && /expected their daily moves to line up; in the year before the posts, they did/.test(x.text)));
+    const miss = findings(base({ ...withDrivers("together"), co_movement: cm([-0.05, 0.1], [-0.05, 0.1]) }));
+    assert.ok(miss.some((x) => x.kind === "drivers_unexpected" && /line up, but .* showed no clear relationship/.test(x.text)));
+    assert.ok(!findings(base({ co_movement: cm([0.2, 0.4], [0.1, 0.3]) })).some((x) => x.kind.startsWith("drivers")));
+  });
+
   it("names shared holdings between opposing opinions", () => {
     const f = findings(base({
       alignment: { value: { relationship: "partly_conflicting" } as ThesisAlignment, cost_usd: 0, cached: true },
@@ -242,11 +307,11 @@ describe("compare: alternate readings", () => {
 
   it("drafts and freezes every reading before outcomes, and reports sensitivity", async () => {
     // A: i1 = rails, i2 = the same trucks B holds. B: trucks.
-    const { deps, t } = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), draft(["TA", "TB", "TC", "TD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment]);
+    const { deps, t } = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), draft(["TA", "TB", "TC", "TD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment, drivers]);
     const r = await compare({ ...deps, alternates: true }, postA, postB);
     assert.ok(r.ok, !r.ok ? r.message : "");
     if (!r.ok) return;
-    assert.equal(t.requests.length, 6);
+    assert.equal(t.requests.length, 7);
     const a = r.value.sides[0]!;
     assert.equal(a.alternates.length, 1);
     assert.equal(a.alternates[0]!.interpretation_id, "i2");
@@ -267,7 +332,7 @@ describe("compare: alternate readings", () => {
   });
 
   it("an alternate holding tickers no other portfolio holds is fetched and backtested", async () => {
-    const { deps, reads } = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), draft(["FA", "FB", "FC", "FD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment]);
+    const { deps, reads } = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), draft(["FA", "FB", "FC", "FD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment, drivers]);
     const r = await compare({ ...deps, alternates: true }, postA, postB);
     assert.ok(r.ok, !r.ok ? r.message : "");
     if (!r.ok) return;
@@ -278,8 +343,8 @@ describe("compare: alternate readings", () => {
   });
 
   it("the frozen run id covers the alternates", async () => {
-    const x = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), draft(["FA", "FB", "FC", "FD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment]);
-    const y = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), draft(["TA", "TB", "TC", "TD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment]);
+    const x = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), draft(["FA", "FB", "FC", "FD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment, drivers]);
+    const y = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), draft(["TA", "TB", "TC", "TD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment, drivers]);
     const rx = await compare({ ...x.deps, alternates: true }, postA, postB);
     const ry = await compare({ ...y.deps, alternates: true }, postA, postB);
     assert.ok(rx.ok && ry.ok);
@@ -291,7 +356,7 @@ describe("compare: alternate readings", () => {
 
   it("a failed alternate is recorded, not fatal", async () => {
     const tooBig = draft(["RA", "RB"]); // 2 positions: under the concentrated minimum of 3
-    const { deps } = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), tooBig, tooBig, tooBig, analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment]);
+    const { deps } = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), tooBig, tooBig, tooBig, analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment, drivers]);
     const r = await compare({ ...deps, alternates: true }, postA, postB);
     assert.ok(r.ok, !r.ok ? r.message : "");
     if (!r.ok) return;
@@ -302,10 +367,10 @@ describe("compare: alternate readings", () => {
   });
 
   it("alternates are off by default", async () => {
-    const { deps, t } = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment]);
+    const { deps, t } = await setup([twoReadings, draft(["RA", "RB", "RC", "RD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment, drivers]);
     const r = await compare(deps, postA, postB);
     assert.ok(r.ok, !r.ok ? r.message : "");
-    assert.equal(t.requests.length, 5);
+    assert.equal(t.requests.length, 6);
     if (r.ok) assert.deepEqual(r.value.sides[0]!.alternates, []);
   });
 
@@ -407,7 +472,7 @@ describe("stance conflicts", () => {
       ],
     };
     data.MSFT = data.FA!;
-    const { deps } = await setup([twoBear, draft(["RA", "RB", "RC", "RD"]), draft(["MSFT", "FB", "FC", "FD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment]);
+    const { deps } = await setup([twoBear, draft(["RA", "RB", "RC", "RD"]), draft(["MSFT", "FB", "FC", "FD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment, drivers]);
     const r = await compare({ ...deps, alternates: true }, postA, postB);
     assert.ok(r.ok, !r.ok ? r.message : "");
     if (!r.ok) return;

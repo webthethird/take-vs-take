@@ -3,7 +3,8 @@
 // Order is the point (docs/PLAN.md §2, §7):
 //   1. Each side is analyzed and drafted on its own: one post per call, no
 //      author, and tickers checked only against prices from before the posts.
-//   2. Both portfolios are frozen to disk, then thesis alignment runs.
+//   2. Both portfolios are frozen to disk, then thesis alignment and the
+//      shared-drivers reading run, still without prices.
 //   3. Only then is the LookAheadGate unlocked and outcome prices read.
 // A side that abstains (not investable / insufficient context) stays an
 // abstention; nothing downstream invents a portfolio for it.
@@ -41,7 +42,7 @@ import {
 } from "./overlap.js";
 import { LookAheadGate, etDate, type PriceSeries, type PriceSource } from "./prices.js";
 import { err, type Result } from "./result.js";
-import { ThesisAlignment, type PostInput, type ThesisAnalysis } from "./schema.js";
+import { SharedDrivers, ThesisAlignment, type PostInput, type ThesisAnalysis } from "./schema.js";
 import { WEIGHT_RULE_VERSION, type Portfolio } from "./weights.js";
 import { companyKey } from "./ticker.js";
 
@@ -49,6 +50,7 @@ export const BENCHMARK = "SPY";
 /// All current Claude models (models overview page, checked 2026-10-19).
 export const MODEL_TRAINING_CUTOFF = "2026-06-30";
 export const ALIGN_PROMPT_VERSION = "align-v1";
+export const DRIVERS_PROMPT_VERSION = "drivers-v1";
 
 // ── Thesis alignment ─────────────────────────────────────────────────────
 
@@ -73,6 +75,32 @@ ${post.text}
 </text>
 <analysis>${JSON.stringify({ status: analysis.status, economic_claim: analysis.economic_claim, direction: analysis.direction, subjects: analysis.subjects })}</analysis>
 </post_${label}>`;
+}
+
+// ── Shared drivers ───────────────────────────────────────────────────────
+//
+// Runs after freezing and before any outcome is read, so it can't be fitted
+// to the result: the page sets its expected co-movement beside the measured
+// one, whichever way that comes out.
+
+export const DRIVERS_SYSTEM = `You compare two hypothetical long-only portfolios, each built from a social-media post, and explain their economic exposures: what drives both, and where they really differ.
+
+You see each post's economic claim and the portfolio built from it: holdings, weights and the role each holding plays. You do not see prices, returns, correlations, dates or who wrote the posts. Reason from what the businesses and funds are exposed to, not from how any of them performed over a particular period.
+
+- Look through funds: an ETF holds many companies, and its largest holdings may be the other portfolio's stocks. Say so when it matters, without inventing exact fund weights.
+- Opposing opinions can produce portfolios with the same drivers (for example, two bets on which companies win the same trend), and similar opinions can produce different exposures. Report what the holdings imply, not what the claims' tone suggests.
+- expected_daily_co_movement: "together" if shared drivers dominate, "apart" if one portfolio tends to gain when the other loses, "no_clear_relationship" if neither dominates.
+- Be concrete and brief. Where you're unsure what a holding is exposed to, say so rather than guess.`;
+
+function renderForDrivers(label: "A" | "B", analysis: ThesisAnalysis, p: Portfolio): string {
+  const rows = p.positions.map((x) => `${x.ticker}  ${x.weight}%  ${x.role} (${x.bucket})`);
+  return `<portfolio_${label}>
+<claim>${analysis.direction}: ${analysis.economic_claim}</claim>
+<holdings>
+${rows.join("\n")}
+cash  ${p.cash_weight}%
+</holdings>
+</portfolio_${label}>`;
 }
 
 // ── Records ──────────────────────────────────────────────────────────────
@@ -137,6 +165,8 @@ export type ComparisonReport = {
   versions: Record<string, string>;
   sides: FrozenRun[];
   alignment: { value: ThesisAlignment; cost_usd: number; cached: boolean } | null;
+  /// What the holdings share economically, read before any prices.
+  drivers: { value: SharedDrivers; cost_usd: number; cached: boolean } | null;
   window: WindowResult | null;
   /// Labels the reader must see next to any result.
   caveats: string[];
@@ -179,7 +209,7 @@ export type CompareDeps = {
 /// Progress, for a UI. Purely informational: nothing depends on it.
 export type Stage =
   | { stage: "analyze" | "draft"; side: "A" | "B" }
-  | { stage: "frozen" | "align" | "prices" | "backtest" };
+  | { stage: "frozen" | "align" | "drivers" | "prices" | "backtest" };
 
 const shift = (d: string, days: number) => new Date(Date.parse(`${d}T12:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 
@@ -278,16 +308,32 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
   });
   if (al.ok) alignment = { value: al.value.value, cost_usd: al.value.meta.cost_usd, cached: al.value.meta.cached };
 
-  const llm_cost_usd = [...fa.attempts, ...fb.attempts].reduce((s, x) => s + x.cost_usd, 0) + (alignment?.cost_usd ?? 0);
+  // Shared drivers: also after freezing and before prices, about the holdings.
+  let drivers: ComparisonReport["drivers"] = null;
+  let driversError: string | null = null;
+  if (fa.portfolio && fb.portfolio) {
+    deps.onStage?.({ stage: "drivers" });
+    const dr = await structuredCall(deps.llm, {
+      promptVersion: DRIVERS_PROMPT_VERSION,
+      system: DRIVERS_SYSTEM,
+      schema: SharedDrivers,
+      messages: [{ role: "user", content: `${renderForDrivers("A", fa.analysis, fa.portfolio)}\n\n${renderForDrivers("B", fb.analysis, fb.portfolio)}` }],
+    });
+    if (dr.ok) drivers = { value: dr.value.value, cost_usd: dr.value.meta.cost_usd, cached: dr.value.meta.cached };
+    else driversError = dr.message;
+  }
+
+  const llm_cost_usd = [...fa.attempts, ...fb.attempts].reduce((s, x) => s + x.cost_usd, 0) + (alignment?.cost_usd ?? 0) + (drivers?.cost_usd ?? 0);
   const caveats: string[] = [
     "Hypothetical, AI-generated interpretations of public posts. The authors did not choose, hold or endorse these portfolios. Not investment advice.",
   ];
   const report: ComparisonReport = {
     comparison_id,
     created_at: now().toISOString(),
-    versions: { analyze: ANALYZE_PROMPT_VERSION, draft: DRAFT_PROMPT_VERSION, align: ALIGN_PROMPT_VERSION, weights: WEIGHT_RULE_VERSION, backtest: BACKTEST_VERSION, overlap: OVERLAP_VERSION },
+    versions: { analyze: ANALYZE_PROMPT_VERSION, draft: DRAFT_PROMPT_VERSION, align: ALIGN_PROMPT_VERSION, drivers: DRIVERS_PROMPT_VERSION, weights: WEIGHT_RULE_VERSION, backtest: BACKTEST_VERSION, overlap: OVERLAP_VERSION },
     sides: frozen,
     alignment,
+    drivers,
     window: null,
     caveats,
     backtests: null,
@@ -298,6 +344,7 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
     llm_cost_usd,
   };
   if (!al.ok) caveats.push(`Thesis alignment unavailable: ${al.message}`);
+  if (driversError) caveats.push(`Shared-drivers reading unavailable: ${driversError}`);
 
   const abstained = frozen.filter((f) => f.portfolio === null);
   if (abstained.length > 0) {
@@ -454,6 +501,16 @@ export function findings(r: ComparisonReport): Finding[] {
   }
   if (agreeing && dir === "apart") {
     out.push({ kind: "mismatch", text: "The opinions are compatible, but the portfolios built from them have historically tended to move apart." });
+  }
+  const expected = r.drivers?.value.expected_daily_co_movement;
+  if (expected && dir) {
+    const will = { together: "line up", apart: "move in opposite directions", no_clear_relationship: "show no clear relationship" }[expected];
+    const did = { together: "lined up", apart: "moved in opposite directions", no_clear_relationship: "showed no clear relationship" }[dir];
+    out.push(
+      expected === dir
+        ? { kind: "drivers_expected", text: `Reading only the holdings, before any prices were loaded, the AI expected their daily moves to ${will}; in the year before the posts, they did.` }
+        : { kind: "drivers_unexpected", text: `Reading only the holdings, before any prices were loaded, the AI expected their daily moves to ${will}, but in the year before the posts they ${did}.` },
+    );
   }
   if (opposed && r.holdings_overlap && r.holdings_overlap.shared.length > 0) {
     out.push({ kind: "shared_holdings", text: `The opinions conflict, yet both portfolios hold ${r.holdings_overlap.shared.map((s) => s.ticker).join(", ")}.` });

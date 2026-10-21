@@ -5,6 +5,7 @@
 import { useState } from "react";
 import type { CompareEvent, PostView, ReportView } from "../lib/api.js";
 import type { FrozenRun, Stage } from "../lib/compare.js";
+import type { SharedDrivers } from "../lib/schema.js";
 import type { DemoPair } from "../server/posts.js";
 import { PerformanceChart } from "./chart.js";
 
@@ -17,6 +18,7 @@ const STAGES: { key: string; label: string }[] = [
   { key: "draft:B", label: "Build portfolio B" },
   { key: "frozen", label: "Freeze both portfolios" },
   { key: "align", label: "Compare the opinions" },
+  { key: "drivers", label: "Compare what the holdings are exposed to" },
   { key: "prices", label: "Load prices" },
   { key: "backtest", label: "Backtest and compare" },
 ];
@@ -264,6 +266,11 @@ function Summary({ report }: { report: ReportView }) {
           ))}
         </ul>
       )}
+      {report.drivers && (
+        <p className="drivers-summary">
+          <span className="tag">AI reading of the holdings</span> {report.drivers.value.summary}
+        </p>
+      )}
       <dl className="headline">
         {al && (
           <div>
@@ -455,6 +462,62 @@ function Comparison({ report }: { report: ReportView }) {
           )}
         </div>
       </div>
+      {report.drivers && <Drivers d={report.drivers.value} />}
     </section>
+  );
+}
+
+const EXPECT = { together: "line up", apart: "move in opposite directions", no_clear_relationship: "show no clear relationship" } as const;
+
+function Drivers({ d }: { d: SharedDrivers }) {
+  return (
+    <div className="fact drivers">
+      <h3>What are they exposed to?</h3>
+      <p>{d.summary}</p>
+      {d.shared.length > 0 && (
+        <table className="exposures">
+          <thead>
+            <tr>
+              <th>Shared driver</th>
+              <th style={{ color: COLORS.A }}>A</th>
+              <th style={{ color: COLORS.B }}>B</th>
+            </tr>
+          </thead>
+          <tbody>
+            {d.shared.map((x) => (
+              <tr key={x.driver}>
+                <td>{x.driver}</td>
+                <td>{x.a}</td>
+                <td>{x.b}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {d.differences.length > 0 && (
+        <table className="exposures">
+          <thead>
+            <tr>
+              <th>Where they differ</th>
+              <th style={{ color: COLORS.A }}>A</th>
+              <th style={{ color: COLORS.B }}>B</th>
+            </tr>
+          </thead>
+          <tbody>
+            {d.differences.map((x) => (
+              <tr key={x.driver}>
+                <td>{x.driver}</td>
+                <td>{x.a}</td>
+                <td>{x.b}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <p className="muted small">
+        The model&apos;s reading of the two portfolios ({d.confidence} confidence), made after both were frozen and before any prices were loaded. It
+        expected their daily moves to {EXPECT[d.expected_daily_co_movement]}; compare that with the measured result above. An interpretation, not data.
+      </p>
+    </div>
   );
 }

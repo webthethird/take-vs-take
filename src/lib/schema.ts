@@ -169,3 +169,33 @@ export const ThesisAlignment = z.object({
   confidence: z.enum(["low", "medium", "high"]),
 });
 export type ThesisAlignment = z.infer<typeof ThesisAlignment>;
+
+/// The model's reading of what two frozen portfolios are economically exposed
+/// to, made before any prices are loaded. A prediction to set beside the
+/// measured co-movement, not an explanation fitted to it.
+export const SharedDrivers = z.object({
+  shared: z
+    .array(
+      z.object({
+        driver: z.string().describe("An economic factor both portfolios depend on, e.g. 'AI data-center chip demand'."),
+        a: z.string().describe("Which of A's holdings carry it, and how."),
+        b: z.string().describe("Which of B's holdings carry it, and how."),
+      }),
+    )
+    .describe("Empty if they share no meaningful driver."),
+  differences: z
+    .array(
+      z.object({
+        driver: z.string().describe("An economic factor only one portfolio depends on, or that they're exposed to in opposite ways."),
+        a: z.string().describe("A's exposure to it, or 'none'."),
+        b: z.string().describe("B's exposure to it, or 'none'."),
+      }),
+    )
+    .describe("The differences that matter most, not every one."),
+  expected_daily_co_movement: z
+    .enum(["together", "apart", "no_clear_relationship"])
+    .describe("How you expect the two portfolios' daily returns to relate in ordinary market conditions."),
+  summary: z.string().describe("One or two plain sentences: what the portfolios have in common economically, and where they really differ."),
+  confidence: z.enum(["low", "medium", "high"]),
+});
+export type SharedDrivers = z.infer<typeof SharedDrivers>;
