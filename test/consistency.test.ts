@@ -147,6 +147,14 @@ describe("selfConsistency", () => {
     for (const f of files) assert.doesNotMatch(await readFile(join(deps.outDir, f), "utf8"), /adjClose|cumulativeReturn|"values"|ex_ante/);
   });
 
+  it("saves the report when the price plan allows it", async () => {
+    const { deps } = await setup([A, RAILS, A, RAILS, B, TRUCKS, B, TRUCKS].map(ok));
+    const r = await selfConsistency({ ...deps, persistReport: true }, postA, postB, 2);
+    assert.ok(r.ok);
+    const { readdir } = await import("node:fs/promises");
+    assert.ok((await readdir(deps.outDir, { recursive: true })).some((f) => f.endsWith("report.json")));
+  });
+
   it("samples differ only by cache key: the model sees identical prompts", async () => {
     const { deps, t } = await setup([A, RAILS, A, RAILS, B, TRUCKS, B, TRUCKS].map(ok));
     await selfConsistency(deps, postA, postB, 2);

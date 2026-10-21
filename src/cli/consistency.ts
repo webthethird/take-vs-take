@@ -11,7 +11,7 @@
 import { selfConsistency, DEFAULT_SAMPLES, type ConsistencyReport } from "../lib/consistency.js";
 import { loadFixture } from "../lib/fixture.js";
 import { anthropicTransport, ledgerTotal } from "../lib/llm.js";
-import { tiingoSource } from "../lib/tiingo.js";
+import { tiingoFromEnv } from "../lib/tiingo.js";
 import { round1 } from "../lib/weights.js";
 
 const args = process.argv.slice(2);
@@ -38,13 +38,13 @@ if (!b.ok) throw new Error(`${fb}: ${b.message}`);
 
 const ledgerPath = ".cache/llm-ledger.jsonl";
 const spentBefore = await ledgerTotal(ledgerPath);
-// The shared hourly log is the real limit; the per-process cap just matches it.
-const tiingo = tiingoSource({ token: process.env.TIINGO_API_TOKEN ?? "", requestLog: ".cache/tiingo-requests.log", maxRequests: 45 });
+const { tiingo, prices, persist } = tiingoFromEnv();
 const r = await selfConsistency(
   {
     llm: { transport: anthropicTransport(), budgetUsd: budget, cacheDir: ".cache/llm", ledgerPath },
-    prices: tiingo,
+    prices,
     outDir: ".cache/runs",
+    persistReport: persist,
   },
   a.value,
   b.value,
@@ -56,7 +56,7 @@ if (!r.ok) {
   process.exit(1);
 }
 print(r.value);
-console.log(`\nLLM spend this run: $${spent.toFixed(4)}. Tiingo requests: ${tiingo.requests}. Samples: .cache/runs/consistency-${r.value.comparison_id}/samples.json`);
+console.log(`\nLLM spend this run: $${spent.toFixed(4)}. Tiingo requests: ${tiingo.requests}. Saved: .cache/runs/consistency-${r.value.comparison_id}/${persist ? "report.json" : "samples.json"}`);
 
 function pct(x: number): string {
   return `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;

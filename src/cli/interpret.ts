@@ -15,7 +15,7 @@ import { analyzeThesis, draftPortfolio, priceTickerCheck, type Attempt } from ".
 import { anthropicTransport, ledgerTotal, type LlmConfig } from "../lib/llm.js";
 import { LookAheadGate } from "../lib/prices.js";
 import { ThesisInput } from "../lib/schema.js";
-import { tiingoSource } from "../lib/tiingo.js";
+import { tiingoFromEnv } from "../lib/tiingo.js";
 import { round1 } from "../lib/weights.js";
 
 const Fixture = z.object({
@@ -49,8 +49,7 @@ const cfg: LlmConfig = {
   cacheDir: ".cache/llm",
   ledgerPath: ".cache/llm-ledger.jsonl",
 };
-const tiingo = tiingoSource({ token: process.env.TIINGO_API_TOKEN ?? "" });
-const prices = tiingo;
+const { prices, tiingo } = tiingoFromEnv();
 
 const spentBefore = await ledgerTotal(cfg.ledgerPath);
 const cost = (as: Attempt[]) => as.reduce((s, a) => s + a.cost_usd, 0);

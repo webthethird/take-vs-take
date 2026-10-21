@@ -177,6 +177,7 @@ export async function selfConsistency(deps: CompareDeps, postA: PostInput, postB
   const built = (label: "A" | "B") => samples.filter((s) => s.side === label && s.run?.portfolio);
   if (built("A").length === 0 || built("B").length === 0) {
     report.findings = consistencyFindings(report);
+    if (deps.persistReport) await writeReport(dir, report);
     return { ok: true, value: report };
   }
 
@@ -236,8 +237,13 @@ export async function selfConsistency(deps: CompareDeps, postA: PostInput, postB
 
   report.summary = summarize(n, samples, report.within, report.between);
   report.findings = consistencyFindings(report);
-  // Returned, not written: it's derived from price data (see compare()).
+  // Derived from prices: saved only when the plan allows (see compare()).
+  if (deps.persistReport) await writeReport(dir, report);
   return { ok: true, value: report };
+}
+
+async function writeReport(dir: string, report: ConsistencyReport) {
+  await writeFile(join(dir, "report.json"), JSON.stringify(report, null, 2));
 }
 
 function range(xs: number[]) {

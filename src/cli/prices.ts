@@ -5,7 +5,7 @@
 //   pnpm prices SPY 2026-09-25 2026-10-02
 //   pnpm prices BRK.B 2026-01-01 2026-03-31
 
-import { tiingoSource } from "../lib/tiingo.js";
+import { tiingoFromEnv } from "../lib/tiingo.js";
 
 const args = process.argv.slice(2);
 const [ticker, start, end] = args.filter((a) => !a.startsWith("--"));
@@ -20,7 +20,8 @@ try {
   // Fall through: tiingoSource reports the missing token.
 }
 
-const tiingo = tiingoSource({ token: process.env.TIINGO_API_TOKEN ?? "" });
+// The raw source, never the cache: this probe stores nothing.
+const { tiingo } = tiingoFromEnv();
 const r = await tiingo.daily(ticker, start, end);
 
 if (!r.ok) {

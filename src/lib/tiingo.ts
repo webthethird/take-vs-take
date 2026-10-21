@@ -1,22 +1,67 @@
 // Tiingo end-of-day prices.
 //
-// Free "Starter" tier: 50 requests/hour, 1,000/day, 500 unique symbols/month,
-// licensed for personal/internal use only. Behaviour verified live on
-// 2026-10-19: unknown symbols return 404 {"detail":"Not found."}; some delisted
+// Plans (pricing page, 2026-10-20): Starter is free, 50 requests/hour,
+// 1,000/day, 500 unique symbols/month; Power is $30/month, 10,000/hour,
+// 100,000/day. Both are personal/internal use. Tiingo confirmed by email
+// (2026-10-21) that our summary results qualify as shareable Derived
+// Products, and that Power, unlike Starter, may store prices.
+//
+// Behaviour verified live on 2026-10-19: unknown symbols return 404 {"detail":"Not found."}; some delisted
 // symbols are kept (TWTR, through 2022-10-28) and some are not (SIVB is 404);
 // share classes use a dash (BRK-B).
 //
 // The token travels in the Authorization header, never in the URL, so it can't
 // leak through logged URLs or error messages.
 
+import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { z } from "zod";
-import { checkBars, validateRange, type PriceError, type PriceSeries, type PriceSource } from "./prices.js";
+import { cachedSource, checkBars, validateRange, type PriceError, type PriceSeries, type PriceSource } from "./prices.js";
 import { err, type Result } from "./result.js";
 import { tickerKey } from "./ticker.js";
 
 const BASE = "https://api.tiingo.com";
+
+export type TiingoPlan = "starter" | "power";
+
+/// Our local limits per plan, set well below Tiingo's so a runaway loop
+/// fails here first. `persist`: whether the plan's terms (1.6) let us store
+/// prices and results derived from them.
+export const PLANS: Record<TiingoPlan, { hourly: number; daily: number; perRun: number; persist: boolean }> = {
+  starter: { hourly: 45, daily: 950, perRun: 45, persist: false },
+  power: { hourly: 2_000, daily: 20_000, perRun: 500, persist: true },
+};
+
+/// TIINGO_PLAN from the environment. Unset means Starter, the plan that
+/// stores nothing; anything unrecognised is an error rather than a guess.
+export function parsePlan(value: string | undefined): TiingoPlan {
+  const v = (value ?? "").trim().toLowerCase();
+  if (v === "" || v === "starter") return "starter";
+  if (v === "power") return "power";
+  throw new Error(`TIINGO_PLAN must be "starter" or "power", not ${JSON.stringify(value)}.`);
+}
+
+/// The price source for the app and CLIs: Tiingo with the plan's local
+/// quotas, behind the on-disk cache only when the plan allows storing data.
+export function tiingoFromEnv(env: Record<string, string | undefined> = process.env, root = ".") {
+  const plan = parsePlan(env.TIINGO_PLAN);
+  const limits = PLANS[plan];
+  const cacheDir = join(root, ".cache/prices");
+  // After a downgrade, Tiingo's terms require deleting stored prices.
+  if (!limits.persist && existsSync(cacheDir)) {
+    throw new Error(`TIINGO_PLAN is ${plan}, which may not store Tiingo data, but ${cacheDir} exists. Delete it, or set TIINGO_PLAN=power if that's your plan.`);
+  }
+  const tiingo = tiingoSource({
+    token: env.TIINGO_API_TOKEN ?? "",
+    requestLog: join(root, ".cache/tiingo-requests.log"),
+    hourlyLimit: limits.hourly,
+    dailyLimit: limits.daily,
+    maxRequests: limits.perRun,
+  });
+  const prices: PriceSource = limits.persist ? cachedSource(tiingo, cacheDir) : tiingo;
+  return { plan, persist: limits.persist, tiingo, prices };
+}
 
 const TiingoBar = z.object({
   date: z.string(), // "2026-09-25T00:00:00.000Z"
@@ -36,8 +81,8 @@ export type TiingoOptions = {
   /// retried: on the free tier it means the hourly quota is spent, and
   /// hammering won't refill it.
   retries?: number;
-  /// Per-process ceiling, kept below the 50/hour quota so a buggy loop
-  /// fails locally instead of locking the account out for an hour.
+  /// Per-source ceiling, so a buggy loop fails locally instead of spending
+  /// the account's quota.
   maxRequests?: number;
   /// Persistent log of request times, shared by every process. With it, the
   /// free tier's hourly and daily quotas are enforced locally: a request that

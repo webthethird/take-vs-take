@@ -128,7 +128,7 @@ describe("compare", () => {
     assert.ok(rep.caveats.some((c) => /postdate the interpretation model's training cutoff/.test(c)));
   });
 
-  it("stores nothing derived from prices: only the frozen runs", async () => {
+  it("by default stores nothing derived from prices: only the frozen runs", async () => {
     const { deps } = await setup(happy);
     const r = await compare(deps, postA, postB);
     assert.ok(r.ok && r.value.backtests);
@@ -137,6 +137,16 @@ describe("compare", () => {
     for (const f of files.filter((f) => f.endsWith(".json"))) {
       assert.doesNotMatch(await readFile(join(deps.outDir, f), "utf8"), /adjClose|cumulativeReturn|"values"/);
     }
+  });
+
+  it("saves the report when the price plan allows it", async () => {
+    const { deps } = await setup(happy);
+    const r = await compare({ ...deps, persistReport: true }, postA, postB);
+    assert.ok(r.ok);
+    const files = await readdir(deps.outDir, { recursive: true });
+    const report = files.find((f) => f.endsWith("report.json"));
+    assert.ok(report, files.join(", "));
+    assert.equal(JSON.parse(await readFile(join(deps.outDir, report), "utf8")).comparison_id, r.value.comparison_id);
   });
 
   it("reports stages in pipeline order", async () => {

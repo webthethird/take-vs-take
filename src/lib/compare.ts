@@ -166,6 +166,10 @@ export type CompareDeps = {
   /// Last trading day to evaluate through; defaults to the benchmark's latest.
   end?: string;
   onStage?: (s: Stage) => void;
+  /// Save the report next to the frozen runs. Only when the price plan's
+  /// terms allow storing results derived from prices (Tiingo Starter
+  /// doesn't).
+  persistReport?: boolean;
   /// Also draft every non-default reading, for sensitivity analysis.
   /// Off by default: it multiplies cost, and it's a diagnostic, not the
   /// headline.
@@ -300,6 +304,7 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
     for (const f of abstained) {
       report.findings.push({ kind: "abstention", text: `Post ${f.label} was judged ${f.analysis.status.replace("_", " ")}: ${f.analysis.status_reason} No portfolio was built for it.` });
     }
+    if (deps.persistReport) await writeReport(dir, report);
     return { ok: true, value: report };
   }
   const pa = fa.portfolio!;
@@ -362,10 +367,19 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
   };
   report.sensitivity = sensitivity(fa, fb, series, bench, w.value, cutoff.toISOString());
   report.findings = findings(report);
-  // The report is returned, never written: everything from step 3 on is
-  // derived from price data, which Tiingo's Starter terms (1.6(a)) don't
-  // allow us to keep. The frozen runs above contain no prices.
+  // Everything from step 3 on is derived from prices, so it's saved only
+  // when the plan allows (see persistReport). The frozen runs contain no
+  // prices and are always saved.
+  if (deps.persistReport) await writeReport(dir, report);
   return { ok: true, value: report };
+}
+
+/// report.json is the latest; each distinct pair of frozen runs also keeps
+/// its own file, so a rerun with new prompts doesn't erase the old result.
+async function writeReport(dir: string, report: ComparisonReport) {
+  const body = JSON.stringify(report, null, 2);
+  await writeFile(join(dir, `report-${report.sides.map((s) => s.run_id).join("-")}.json`), body);
+  await writeFile(join(dir, "report.json"), body);
 }
 
 /// Tickers a portfolio holds that its own post is negative about. The post's

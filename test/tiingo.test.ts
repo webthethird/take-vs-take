@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
-import { tiingoSource } from "../src/lib/tiingo.js";
+import { parsePlan, tiingoFromEnv, tiingoSource } from "../src/lib/tiingo.js";
 
 const TOKEN = "test-token-0123456789abcdef";
 
@@ -215,6 +218,41 @@ describe("tiingoSource: shared quota log", () => {
       assert.equal(other.calls.length, 0);
     } finally {
       await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("plans", () => {
+  it("defaults to Starter, accepts power in any case, and rejects anything else", () => {
+    assert.equal(parsePlan(undefined), "starter");
+    assert.equal(parsePlan(""), "starter");
+    assert.equal(parsePlan(" Power "), "power");
+    assert.throws(() => parsePlan("pro"), /TIINGO_PLAN/);
+  });
+
+  it("caches and persists only on Power", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tvt-plan-"));
+    try {
+      const starter = tiingoFromEnv({ TIINGO_API_TOKEN: "t" }, root);
+      assert.equal(starter.persist, false);
+      assert.equal(starter.prices, starter.tiingo);
+      const power = tiingoFromEnv({ TIINGO_API_TOKEN: "t", TIINGO_PLAN: "power" }, root);
+      assert.equal(power.persist, true);
+      assert.notEqual(power.prices, power.tiingo);
+      assert.ok("hits" in power.prices);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to start on Starter while stored prices remain", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tvt-plan-"));
+    try {
+      await mkdir(join(root, ".cache/prices"), { recursive: true });
+      assert.throws(() => tiingoFromEnv({ TIINGO_API_TOKEN: "t" }, root), /Delete it/);
+      assert.doesNotThrow(() => tiingoFromEnv({ TIINGO_API_TOKEN: "t", TIINGO_PLAN: "power" }, root));
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 });

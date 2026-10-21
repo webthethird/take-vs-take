@@ -4,16 +4,16 @@
 //
 // --alternates also drafts every non-default reading (sensitivity; costs more).
 //
-// Writes the frozen runs under .cache/runs/compare-<id>/; the report is only
-// printed. Real model calls are capped by LLM_BUDGET_USD and cached, so a
-// rerun after a limit doesn't pay again. Prices are not cached (Tiingo's
-// Starter terms forbid storing them), so every run refetches them, within a
-// shared hourly quota.
+// Writes the frozen runs under .cache/runs/compare-<id>/, plus report.json
+// when TIINGO_PLAN allows storing price-derived results. Real model calls are
+// capped by LLM_BUDGET_USD and cached, so a rerun after a limit doesn't pay
+// again. Prices are cached only on a plan that allows it; Tiingo requests
+// count against a shared hourly quota.
 
 import { compare, type ComparisonReport } from "../lib/compare.js";
 import { loadFixture } from "../lib/fixture.js";
 import { anthropicTransport } from "../lib/llm.js";
-import { tiingoSource } from "../lib/tiingo.js";
+import { tiingoFromEnv } from "../lib/tiingo.js";
 import { round1 } from "../lib/weights.js";
 
 const args = process.argv.slice(2);
@@ -37,12 +37,13 @@ const b = await loadFixture(fb);
 if (!a.ok) throw new Error(`${fa}: ${a.message}`);
 if (!b.ok) throw new Error(`${fb}: ${b.message}`);
 
-const tiingo = tiingoSource({ token: process.env.TIINGO_API_TOKEN ?? "", requestLog: ".cache/tiingo-requests.log" });
+const { tiingo, prices, persist } = tiingoFromEnv();
 const r = await compare(
   {
     llm: { transport: anthropicTransport(), budgetUsd: budget, cacheDir: ".cache/llm", ledgerPath: ".cache/llm-ledger.jsonl" },
-    prices: tiingo,
+    prices,
     outDir: ".cache/runs",
+    persistReport: persist,
     alternates,
   },
   a.value,
@@ -53,7 +54,7 @@ if (!r.ok) {
   process.exit(1);
 }
 print(r.value);
-console.log(`\nTiingo requests this run: ${tiingo.requests}. Frozen runs: .cache/runs/compare-${r.value.comparison_id}/`);
+console.log(`\nTiingo requests this run: ${tiingo.requests}. Saved: .cache/runs/compare-${r.value.comparison_id}/${persist ? "report.json" : " (frozen runs only)"}`);
 
 function pct(x: number): string {
   return `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
