@@ -144,16 +144,15 @@ function Report({ report, posts }: { report: ReportView; posts: { A: PostView; B
   const bt = report.backtests;
   return (
     <div className="report">
+      <Summary report={report} />
+
       <section className="caveats">
         {report.caveats.map((c) => (
           <p key={c}>{c}</p>
         ))}
       </section>
 
-      <section className="sides">
-        <SideCard side={sa} post={posts.A} color={COLORS.A} ret={bt?.a.metrics.cumulativeReturn} />
-        <SideCard side={sb} post={posts.B} color={COLORS.B} ret={bt?.b.metrics.cumulativeReturn} />
-      </section>
+      <Comparison report={report} />
 
       {bt && report.window && (
         <section>
@@ -210,18 +209,13 @@ function Report({ report, posts }: { report: ReportView; posts: { A: PostView; B
         </section>
       )}
 
-      <Comparison report={report} />
-
-      {report.findings.length > 0 && (
-        <section>
-          <h2>What stands out</h2>
-          <ul className="findings">
-            {report.findings.map((f) => (
-              <li key={f.text}>{f.text}</li>
-            ))}
-          </ul>
+      <details className="full">
+        <summary>Both posts and portfolios in full</summary>
+        <section className="sides">
+          <SideCard side={sa} post={posts.A} color={COLORS.A} ret={bt?.a.metrics.cumulativeReturn} />
+          <SideCard side={sb} post={posts.B} color={COLORS.B} ret={bt?.b.metrics.cumulativeReturn} />
         </section>
-      )}
+      </details>
 
       <footer className="muted">
         <p>
@@ -233,6 +227,79 @@ function Report({ report, posts }: { report: ReportView; posts: { A: PostView; B
           .join(", ")}
       </footer>
     </div>
+  );
+}
+
+/// The answer first: each post's claim, what stands out, and the headline
+/// numbers. Everything here is repeated, with its method, further down.
+function Summary({ report }: { report: ReportView }) {
+  const sides = report.sides as [FrozenRun, FrozenRun];
+  const bt = report.backtests;
+  const h = report.holdings_overlap;
+  const cm = report.co_movement;
+  const al = report.alignment?.value;
+  return (
+    <section className="summary">
+      <div className="claims">
+        {sides.map((s) => (
+          <div key={s.label} className="claim" style={{ borderLeftColor: COLORS[s.label] }}>
+            <p className="small">
+              <strong style={{ color: COLORS[s.label] }}>Post {s.label}</strong>{" "}
+              <a href={s.post.url} target="_blank" rel="noreferrer">
+                @{s.post.author_handle}
+              </a>
+              <span className="muted"> · {s.post.created_at.slice(0, 10)}</span>
+            </p>
+            <p>
+              <span className={`tag ${s.analysis.direction}`}>{s.analysis.direction}</span> {s.analysis.economic_claim}
+            </p>
+            {!s.portfolio && <p className="muted small">No portfolio: {words(s.analysis.status)}.</p>}
+          </div>
+        ))}
+      </div>
+      {report.findings.length > 0 && (
+        <ul className="findings">
+          {report.findings.map((f) => (
+            <li key={f.text}>{f.text}</li>
+          ))}
+        </ul>
+      )}
+      <dl className="headline">
+        {al && (
+          <div>
+            <dt>Opinions</dt>
+            <dd>{words(al.relationship)}</dd>
+          </div>
+        )}
+        {h && (
+          <div>
+            <dt>Direct ticker overlap</dt>
+            <dd>{Math.round(h.overlap * 100)}%</dd>
+          </div>
+        )}
+        {cm?.ex_ante_direction && (
+          <div>
+            <dt>Daily moves, year before</dt>
+            <dd>
+              {words(cm.ex_ante_direction)}
+              {cm.ex_ante?.raw != null && <span className="muted"> ({cm.ex_ante.raw.toFixed(2)})</span>}
+            </dd>
+          </div>
+        )}
+        {bt && report.window && (
+          <div>
+            <dt>
+              Return, {report.window.entry} to {report.window.end}
+            </dt>
+            <dd>
+              <span style={{ color: COLORS.A }}>A {pct(bt.a.metrics.cumulativeReturn)}</span> ·{" "}
+              <span style={{ color: COLORS.B }}>B {pct(bt.b.metrics.cumulativeReturn)}</span> ·{" "}
+              <span className="muted">SPY {pct(bt.benchmark.metrics.cumulativeReturn)}</span>
+            </dd>
+          </div>
+        )}
+      </dl>
+    </section>
   );
 }
 
@@ -318,6 +385,7 @@ function Comparison({ report }: { report: ReportView }) {
   const h = report.holdings_overlap;
   const cm = report.co_movement;
   const ex = cm?.ex_ante;
+  const bt = report.backtests;
   const ci = (c: [number, number] | null) => (c ? `95% interval ${c[0].toFixed(2)} to ${c[1].toFixed(2)}` : "");
   const explain = (d: string | null | undefined) =>
     d === "together" ? "tended to rise and fall together" : d === "apart" ? "tended to move in opposite directions" : "showed no clear relationship (the interval includes zero)";
@@ -340,22 +408,33 @@ function Comparison({ report }: { report: ReportView }) {
           )}
         </div>
         <div className="fact">
-          <h3>Do the portfolios hold the same things?</h3>
+          <h3>Do they hold the same tickers?</h3>
           {h ? (
             <>
-              <p className="big">{Math.round(h.overlap * 100)}% overlap</p>
-              <p className="small">{h.shared.length ? `Both hold ${h.shared.map((s) => s.ticker).join(", ")}.` : "No holdings in common."}</p>
-              <p className="muted small">Share of invested weight held in common (the smaller weight of each shared ticker, summed).</p>
+              <p className="big">{Math.round(h.overlap * 100)}%</p>
+              <p className="small">direct ticker overlap</p>
+              <p className="small">{h.shared.length ? `Both hold ${h.shared.map((s) => s.ticker).join(", ")}.` : "No tickers in common."}</p>
+              <p className="muted small">
+                Share of invested weight in the same tickers (the smaller weight of each shared ticker, summed). A fund counts as one ticker, so if one
+                side holds a fund that owns the other side&apos;s stocks, that shared exposure isn&apos;t counted here. The next card measures shared
+                exposure from how the portfolios actually behaved.
+              </p>
             </>
           ) : (
             <p className="muted">Not computed: a side has no portfolio.</p>
           )}
         </div>
         <div className="fact">
-          <h3>Do they move together?</h3>
+          <h3>Do their daily moves line up?</h3>
           {ex && ex.raw !== null ? (
             <>
               <p className="big">{words(cm!.ex_ante_direction ?? "unavailable")}</p>
+              {bt && (
+                <p className="small">
+                  This is separate from where they ended up (over the window, A {pct(bt.a.metrics.cumulativeReturn)} and B{" "}
+                  {pct(bt.b.metrics.cumulativeReturn)}): portfolios whose daily moves line up can still drift far apart.
+                </p>
+              )}
               <p className="small">
                 In the year before the posts, the two portfolios' daily returns {explain(cm!.ex_ante_direction)}: correlation {ex.raw.toFixed(2)}, {ci(ex.rawCi95)}.
               </p>
@@ -366,8 +445,8 @@ function Comparison({ report }: { report: ReportView }) {
               )}
               {cm!.realized && cm!.realized.raw !== null && (
                 <p className="muted small">
-                  Over the comparison window itself: {cm!.realized.raw.toFixed(2)} ({words(cm!.realized_direction ?? "n/a")}). Shown for reference; it uses the
-                  outcome period.
+                  Over the comparison window itself ({cm!.realized.days} trading days): correlation {cm!.realized.raw.toFixed(2)}, {ci(cm!.realized.rawCi95)}:{" "}
+                  {words(cm!.realized_direction ?? "n/a")}. Shown for reference; it uses the outcome period.
                 </p>
               )}
             </>
