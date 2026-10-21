@@ -4,8 +4,9 @@
 
 import { useState } from "react";
 import type { CompareEvent, PostView, ReportView } from "../lib/api.js";
-import type { FrozenRun, Stage } from "../lib/compare.js";
-import type { SharedDrivers } from "../lib/schema.js";
+import type { FidelityResult, FrozenRun, Stage } from "../lib/compare.js";
+import type { FidelityLink, SharedDrivers } from "../lib/schema.js";
+import { tickerKey } from "../lib/ticker.js";
 import type { DemoPair } from "../server/posts.js";
 import { PerformanceChart } from "./chart.js";
 
@@ -19,6 +20,8 @@ const STAGES: { key: string; label: string }[] = [
   { key: "frozen", label: "Freeze both portfolios" },
   { key: "align", label: "Compare the opinions" },
   { key: "drivers", label: "Compare what the holdings are exposed to" },
+  { key: "fidelity:A", label: "Check portfolio A against its post" },
+  { key: "fidelity:B", label: "Check portfolio B against its post" },
   { key: "prices", label: "Load prices" },
   { key: "backtest", label: "Backtest and compare" },
 ];
@@ -214,8 +217,8 @@ function Report({ report, posts }: { report: ReportView; posts: { A: PostView; B
       <details className="full">
         <summary>Both posts and portfolios in full</summary>
         <section className="sides">
-          <SideCard side={sa} post={posts.A} color={COLORS.A} ret={bt?.a.metrics.cumulativeReturn} />
-          <SideCard side={sb} post={posts.B} color={COLORS.B} ret={bt?.b.metrics.cumulativeReturn} />
+          <SideCard side={sa} post={posts.A} color={COLORS.A} ret={bt?.a.metrics.cumulativeReturn} fidelity={report.fidelity?.A ?? null} />
+          <SideCard side={sb} post={posts.B} color={COLORS.B} ret={bt?.b.metrics.cumulativeReturn} fidelity={report.fidelity?.B ?? null} />
         </section>
       </details>
 
@@ -256,6 +259,7 @@ function Summary({ report }: { report: ReportView }) {
               <span className={`tag ${s.analysis.direction}`}>{s.analysis.direction}</span> {s.analysis.economic_claim}
             </p>
             {!s.portfolio && <p className="muted small">No portfolio: {words(s.analysis.status)}.</p>}
+            {s.portfolio && <FidelityLine f={report.fidelity?.[s.label] ?? null} />}
           </div>
         ))}
       </div>
@@ -310,7 +314,33 @@ function Summary({ report }: { report: ReportView }) {
   );
 }
 
-function SideCard({ side, post, color, ret }: { side: FrozenRun; post: PostView; color: string; ret?: number }) {
+const LINKS: { key: FidelityLink; label: string; title: string }[] = [
+  { key: "named", label: "named in the post", title: "The post names this company or security." },
+  { key: "direct", label: "direct", title: "Not named, but it expresses the claim itself with little else attached." },
+  { key: "proxy", label: "stand-in", title: "Stands in for something the claim is about that can't be owned or wasn't specified; carries other exposures too." },
+  { key: "added", label: "added", title: "Exposure the claim doesn't call for." },
+];
+
+/// How the invested weight splits by fidelity label, and what the portfolio
+/// can only approximate. The labels are the model's; the percentages are sums.
+function FidelityLine({ f }: { f: FidelityResult | null }) {
+  if (!f) return <p className="muted small">Fidelity labels unavailable.</p>;
+  const parts = LINKS.filter((l) => f.shares[l.key] > 0).map((l) => `${Math.round(f.shares[l.key] * 100)}% ${l.label}`);
+  return (
+    <div className="fidelity small">
+      <p>
+        <span className="tag">AI check against the post</span> Invested weight: {parts.join(" · ")}. {f.value.summary}
+      </p>
+      {f.value.not_investable.length > 0 && (
+        <p className="muted">
+          Can&apos;t be owned directly: {f.value.not_investable.map((x) => `${x.part} (${x.why})`).join("; ")}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function SideCard({ side, post, color, ret, fidelity }: { side: FrozenRun; post: PostView; color: string; ret?: number; fidelity: FidelityResult | null }) {
   const an = side.analysis;
   const reading = an.interpretations.find((i) => i.id === an.default_interpretation);
   const p = side.portfolio;
@@ -345,11 +375,17 @@ function SideCard({ side, post, color, ret }: { side: FrozenRun; post: PostView;
             <strong>{reading.label}</strong> <span className="tag">{reading.author_stated ? "the post names these" : "AI-inferred"}</span>
           </p>
           {reading.gap_note && <p className="muted small">Beyond the post: {reading.gap_note}</p>}
+          {side.model_default && (
+            <p className="muted small">
+              The model preferred a broader reading, &ldquo;{an.interpretations.find((i) => i.id === side.model_default)?.label}&rdquo;. Readings built
+              from what the author named come first here, even when they cover less of the claim.
+            </p>
+          )}
           {p.long_only_note && <p className="muted small">Long-only: {p.long_only_note}</p>}
           <table className="holdings">
             <tbody>
               {p.buckets.map((bk) => (
-                <BucketRows key={bk.name} bucket={bk} positions={p.positions.filter((x) => x.bucket === bk.name)} />
+                <BucketRows key={bk.name} bucket={bk} positions={p.positions.filter((x) => x.bucket === bk.name)} fidelity={fidelity} />
               ))}
               <tr className="cash">
                 <td>Cash</td>
@@ -369,7 +405,16 @@ function SideCard({ side, post, color, ret }: { side: FrozenRun; post: PostView;
   );
 }
 
-function BucketRows({ bucket, positions }: { bucket: { name: string; weight: number }; positions: { ticker: string; weight: number; role: string }[] }) {
+function BucketRows({
+  bucket,
+  positions,
+  fidelity,
+}: {
+  bucket: { name: string; weight: number };
+  positions: { ticker: string; weight: number; role: string }[];
+  fidelity: FidelityResult | null;
+}) {
+  const labelOf = (t: string) => fidelity?.value.holdings.find((h) => tickerKey(h.ticker) === tickerKey(t));
   return (
     <>
       <tr className="bucket">
@@ -379,7 +424,22 @@ function BucketRows({ bucket, positions }: { bucket: { name: string; weight: num
       {positions.map((x) => (
         <tr key={x.ticker}>
           <td className="ticker">{x.ticker}</td>
-          <td className="muted small">{x.role}</td>
+          <td className="muted small">
+            {x.role}
+            {(() => {
+              const l = labelOf(x.ticker);
+              const meta = l && LINKS.find((k) => k.key === l.link);
+              return meta ? (
+                <>
+                  {" "}
+                  <span className={`tag link-${l.link}`} title={`${meta.title} ${l.note}`}>
+                    {meta.label}
+                    {l.stands_for ? `: ${l.stands_for}` : ""}
+                  </span>
+                </>
+              ) : null;
+            })()}
+          </td>
           <td>{round1(x.weight)}%</td>
         </tr>
       ))}

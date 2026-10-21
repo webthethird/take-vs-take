@@ -7,7 +7,7 @@ import { compare } from "../src/lib/compare.js";
 import { consistencyFindings, sampleNonce, selfConsistency, type ConsistencyReport } from "../src/lib/consistency.js";
 import type { LlmConfig, ModelResponse } from "../src/lib/llm.js";
 import { fixtureSource, type PriceBar, type PriceSource } from "../src/lib/prices.js";
-import { PostInput, type PortfolioDraft, type SharedDrivers, type ThesisAlignment, type ThesisAnalysis } from "../src/lib/schema.js";
+import { PostInput, type Fidelity, type PortfolioDraft, type SharedDrivers, type ThesisAlignment, type ThesisAnalysis } from "../src/lib/schema.js";
 import { scripted } from "./llm.test.js";
 
 // Same synthetic world as compare.test.ts: R* ride the market (β 1.2),
@@ -70,6 +70,8 @@ const draft = (tickers: string[]): PortfolioDraft => ({
   positions: tickers.map((ticker) => ({ ticker, role: "r", bucket: "B", rationale: "", tier: "core" as const })),
 });
 const alignment: ThesisAlignment = { a_claim: "rails", b_claim: "trucks", shared_subjects: [], reasoning: "r", relationship: "opposing", confidence: "medium" };
+// Labels for tickers these tests don't hold: compare() records a caveat, not a failure.
+const fidelity: Fidelity = { holdings: [], not_investable: [], summary: "s" };
 const drivers: SharedDrivers = { shared: [], differences: [], expected_daily_co_movement: "together", summary: "s", confidence: "medium" };
 
 const A = analysis("rails", "Buy the railroads.");
@@ -175,12 +177,12 @@ describe("selfConsistency", () => {
   });
 
   it("sample 0 replays the plain compare() run from cache", async () => {
-    const { deps, t } = await setup([A, RAILS, B, TRUCKS, alignment, drivers, A, RAILS, B, TRUCKS].map(ok));
+    const { deps, t } = await setup([A, RAILS, B, TRUCKS, alignment, drivers, fidelity, fidelity, A, RAILS, B, TRUCKS].map(ok));
     assert.ok((await compare({ ...deps, alternates: false }, postA, postB)).ok);
-    assert.equal(t.requests.length, 6);
+    assert.equal(t.requests.length, 8);
     const r = await selfConsistency(deps, postA, postB, 2);
     assert.ok(r.ok, !r.ok ? r.message : "");
-    assert.equal(t.requests.length, 10); // only samples 1 of each side are new
+    assert.equal(t.requests.length, 12); // only samples 1 of each side are new
   });
 
   it("records a model failure as that sample's outcome and carries on", async () => {

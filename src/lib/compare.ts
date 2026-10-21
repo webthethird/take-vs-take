@@ -42,15 +42,17 @@ import {
 } from "./overlap.js";
 import { LookAheadGate, etDate, type PriceSeries, type PriceSource } from "./prices.js";
 import { err, type Result } from "./result.js";
-import { SharedDrivers, ThesisAlignment, type PostInput, type ThesisAnalysis } from "./schema.js";
+import { Fidelity, SharedDrivers, ThesisAlignment, type FidelityLink, type PostInput, type ThesisAnalysis } from "./schema.js";
 import { WEIGHT_RULE_VERSION, type Portfolio } from "./weights.js";
-import { companyKey } from "./ticker.js";
+import { companyKey, tickerKey } from "./ticker.js";
 
 export const BENCHMARK = "SPY";
 /// All current Claude models (models overview page, checked 2026-10-19).
 export const MODEL_TRAINING_CUTOFF = "2026-06-30";
 export const ALIGN_PROMPT_VERSION = "align-v1";
 export const DRIVERS_PROMPT_VERSION = "drivers-v1";
+export const FIDELITY_PROMPT_VERSION = "fidelity-v1";
+export const DEFAULT_RULE_VERSION = "default-v1";
 
 // ── Thesis alignment ─────────────────────────────────────────────────────
 
@@ -103,6 +105,77 @@ cash  ${p.cash_weight}%
 </portfolio_${label}>`;
 }
 
+// ── Default reading ──────────────────────────────────────────────────────
+//
+// Which reading becomes the headline portfolio. The developer's rule
+// (2026-10-21): prefer a reading built from what the author named, even when
+// it covers less of the claim, over a broader one built from stand-ins. The
+// model's own choice is kept (and drafted, when alternates are on).
+
+export function pickDefault(a: ThesisAnalysis): string | null {
+  const chosen = a.interpretations.find((i) => i.id === a.default_interpretation);
+  if (!chosen || chosen.author_stated) return a.default_interpretation;
+  return a.interpretations.find((i) => i.author_stated)?.id ?? a.default_interpretation;
+}
+
+// ── Fidelity ─────────────────────────────────────────────────────────────
+//
+// Per side, after freezing and before prices: how each holding relates to
+// what the post actually said. The labels are the model's; the weight shares
+// built from them are arithmetic, not a score.
+
+export const FIDELITY_SYSTEM = `You check how faithfully a hypothetical long-only portfolio expresses the social-media post it was built from.
+
+You see the post, an analysis of its claim, the reading that was built, and the holdings with their weights and stated roles. You do not see prices or returns. Label every holding exactly once, using its ticker as given:
+
+- named: the post names this company or security.
+- direct: the post doesn't name it, but owning it expresses the claim itself with little else attached (for example, a sector fund for a claim about that sector).
+- proxy: it stands in for something the claim is about that can't be owned or wasn't specified, such as a private company or an unnamed "competitors", and it carries other exposures too. Say what it stands for.
+- added: exposure the claim doesn't call for.
+
+Then list the parts of the claim the portfolio can only approximate or leave out, and why. Judge against what the post says, not against what would be a sensible investment.`;
+
+function renderForFidelity(post: PostInput, analysis: ThesisAnalysis, p: Portfolio): string {
+  const reading = analysis.interpretations.find((i) => i.id === p.interpretation_id);
+  const rows = p.positions.map((x) => `${x.ticker}  ${x.weight}%  ${x.role}: ${x.rationale}`);
+  return `<post>
+${post.text}
+</post>
+<analysis>${JSON.stringify({ economic_claim: analysis.economic_claim, direction: analysis.direction, targets: analysis.targets })}</analysis>
+<reading>${JSON.stringify(reading ? { label: reading.label, expression: reading.expression, author_stated: reading.author_stated, gap_note: reading.gap_note } : null)}</reading>
+<holdings>
+${rows.join("\n")}
+cash  ${p.cash_weight}%
+</holdings>`;
+}
+
+export type FidelityResult = {
+  value: Fidelity;
+  /// Share of invested weight (excluding cash) per label, in [0, 1].
+  shares: Record<FidelityLink, number>;
+  cost_usd: number;
+  cached: boolean;
+};
+
+/// Labels must cover each holding exactly once; otherwise the shares would
+/// silently misstate the portfolio.
+export function fidelityShares(f: Fidelity, p: Portfolio): Result<Record<FidelityLink, number>, "invalid_request"> {
+  const held = new Map(p.positions.map((x) => [tickerKey(x.ticker), x.weight]));
+  const seen = new Set<string>();
+  const shares: Record<FidelityLink, number> = { named: 0, direct: 0, proxy: 0, added: 0 };
+  const invested = p.positions.reduce((s, x) => s + x.weight, 0);
+  for (const h of f.holdings) {
+    const k = tickerKey(h.ticker);
+    if (!held.has(k)) return err("invalid_request", `Labeled ${h.ticker}, which the portfolio doesn't hold.`);
+    if (seen.has(k)) return err("invalid_request", `Labeled ${h.ticker} twice.`);
+    seen.add(k);
+    shares[h.link] += held.get(k)! / invested;
+  }
+  const missing = [...held.keys()].filter((k) => !seen.has(k));
+  if (missing.length) return err("invalid_request", `No label for ${missing.join(", ")}.`);
+  return { ok: true, value: shares };
+}
+
 // ── Records ──────────────────────────────────────────────────────────────
 
 /// A non-default reading of a post, drafted and frozen alongside the default
@@ -123,6 +196,8 @@ export type Side = {
   portfolio: Portfolio | null;
   alternates: Alternate[];
   attempts: Attempt[];
+  /// The model's choice of default, when pickDefault overrode it.
+  model_default: string | null;
 };
 
 export type FrozenRun = Side & {
@@ -167,6 +242,9 @@ export type ComparisonReport = {
   alignment: { value: ThesisAlignment; cost_usd: number; cached: boolean } | null;
   /// What the holdings share economically, read before any prices.
   drivers: { value: SharedDrivers; cost_usd: number; cached: boolean } | null;
+  /// How each side's holdings relate to its post; null for a side without a
+  /// portfolio or whose labels were unavailable.
+  fidelity: { A: FidelityResult | null; B: FidelityResult | null };
   window: WindowResult | null;
   /// Labels the reader must see next to any result.
   caveats: string[];
@@ -208,7 +286,7 @@ export type CompareDeps = {
 
 /// Progress, for a UI. Purely informational: nothing depends on it.
 export type Stage =
-  | { stage: "analyze" | "draft"; side: "A" | "B" }
+  | { stage: "analyze" | "draft" | "fidelity"; side: "A" | "B" }
   | { stage: "frozen" | "align" | "drivers" | "prices" | "backtest" };
 
 const shift = (d: string, days: number) => new Date(Date.parse(`${d}T12:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
@@ -234,10 +312,12 @@ export async function buildSide(
   deps.onStage?.({ stage: "analyze", side: label });
   const a = await analyzeThesis(deps.llm, input, { nonce });
   if (!a.ok) return { ...err("analysis_failed", `Side ${label}: ${a.error}: ${a.message}`), cause: a.error, attempts: a.attempts };
-  const analysis = a.value.analysis;
+  const chosen = pickDefault(a.value.analysis);
+  const model_default = chosen === a.value.analysis.default_interpretation ? null : a.value.analysis.default_interpretation;
+  const analysis = model_default ? { ...a.value.analysis, default_interpretation: chosen } : a.value.analysis;
   const keep = { post_id: post.post_id, url: post.url, author_handle: post.author_handle, created_at: post.created_at, attachments: post.attachments, provenance: post.provenance };
   if (analysis.status !== "investable" || !analysis.default_interpretation) {
-    return { ok: true, value: { label, post: keep, analysis, portfolio: null, alternates: [], attempts: a.attempts } };
+    return { ok: true, value: { label, post: keep, analysis, portfolio: null, alternates: [], attempts: a.attempts, model_default } };
   }
   const asOf = new Date(post.created_at);
   const check = priceTickerCheck(gate, asOf);
@@ -256,7 +336,7 @@ export async function buildSide(
       alternates.push(x.ok ? { interpretation_id: i.id, portfolio: x.value.portfolio, error: null } : { interpretation_id: i.id, portfolio: null, error: `${x.error}: ${x.message}` });
     }
   }
-  return { ok: true, value: { label, post: keep, analysis, portfolio: d.value.portfolio, alternates, attempts } };
+  return { ok: true, value: { label, post: keep, analysis, portfolio: d.value.portfolio, alternates, attempts, model_default } };
 }
 
 export function freeze(side: Side, now: Date): FrozenRun {
@@ -264,6 +344,7 @@ export function freeze(side: Side, now: Date): FrozenRun {
     analyze: ANALYZE_PROMPT_VERSION,
     draft: DRAFT_PROMPT_VERSION,
     weights: WEIGHT_RULE_VERSION,
+    default_rule: DEFAULT_RULE_VERSION,
     model: side.attempts[0]?.model_requested ?? "unknown",
   };
   const body = { post_id: side.post.post_id, analysis: side.analysis, portfolio: side.portfolio, alternates: side.alternates, versions };
@@ -323,17 +404,38 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
     else driversError = dr.message;
   }
 
-  const llm_cost_usd = [...fa.attempts, ...fb.attempts].reduce((s, x) => s + x.cost_usd, 0) + (alignment?.cost_usd ?? 0) + (drivers?.cost_usd ?? 0);
+  // Fidelity: per side, same timing, never shown the other side.
+  const fidelity: ComparisonReport["fidelity"] = { A: null, B: null };
+  const fidelityErrors: string[] = [];
+  let fidelityCost = 0;
+  for (const [f, post] of [[fa, postA], [fb, postB]] as const) {
+    if (!f.portfolio) continue;
+    deps.onStage?.({ stage: "fidelity", side: f.label });
+    const r = await structuredCall(deps.llm, {
+      promptVersion: FIDELITY_PROMPT_VERSION,
+      system: FIDELITY_SYSTEM,
+      schema: Fidelity,
+      messages: [{ role: "user", content: renderForFidelity(post, f.analysis, f.portfolio) }],
+    });
+    if (r.ok) fidelityCost += r.value.meta.cost_usd;
+    const shares = r.ok ? fidelityShares(r.value.value, f.portfolio) : r;
+    if (r.ok && shares.ok) fidelity[f.label] = { value: r.value.value, shares: shares.value, cost_usd: r.value.meta.cost_usd, cached: r.value.meta.cached };
+    else if (!shares.ok) fidelityErrors.push(`Fidelity labels for ${f.label} unavailable: ${shares.message}`);
+  }
+
+  const llm_cost_usd =
+    [...fa.attempts, ...fb.attempts].reduce((s, x) => s + x.cost_usd, 0) + (alignment?.cost_usd ?? 0) + (drivers?.cost_usd ?? 0) + fidelityCost;
   const caveats: string[] = [
     "Hypothetical, AI-generated interpretations of public posts. The authors did not choose, hold or endorse these portfolios. Not investment advice.",
   ];
   const report: ComparisonReport = {
     comparison_id,
     created_at: now().toISOString(),
-    versions: { analyze: ANALYZE_PROMPT_VERSION, draft: DRAFT_PROMPT_VERSION, align: ALIGN_PROMPT_VERSION, drivers: DRIVERS_PROMPT_VERSION, weights: WEIGHT_RULE_VERSION, backtest: BACKTEST_VERSION, overlap: OVERLAP_VERSION },
+    versions: { analyze: ANALYZE_PROMPT_VERSION, draft: DRAFT_PROMPT_VERSION, align: ALIGN_PROMPT_VERSION, drivers: DRIVERS_PROMPT_VERSION, fidelity: FIDELITY_PROMPT_VERSION, default_rule: DEFAULT_RULE_VERSION, weights: WEIGHT_RULE_VERSION, backtest: BACKTEST_VERSION, overlap: OVERLAP_VERSION },
     sides: frozen,
     alignment,
     drivers,
+    fidelity,
     window: null,
     caveats,
     backtests: null,
@@ -345,6 +447,7 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
   };
   if (!al.ok) caveats.push(`Thesis alignment unavailable: ${al.message}`);
   if (driversError) caveats.push(`Shared-drivers reading unavailable: ${driversError}`);
+  caveats.push(...fidelityErrors);
 
   const abstained = frozen.filter((f) => f.portfolio === null);
   if (abstained.length > 0) {

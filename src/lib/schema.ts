@@ -199,3 +199,26 @@ export const SharedDrivers = z.object({
   confidence: z.enum(["low", "medium", "high"]),
 });
 export type SharedDrivers = z.infer<typeof SharedDrivers>;
+
+/// How each holding relates to what its post actually said, read after
+/// freezing and before prices, one side at a time.
+export const FidelityLink = z.enum(["named", "direct", "proxy", "added"]);
+export type FidelityLink = z.infer<typeof FidelityLink>;
+
+export const Fidelity = z.object({
+  holdings: z.array(
+    z.object({
+      ticker: z.string(),
+      link: FidelityLink.describe(
+        "named: the post names this company or security. direct: not named, but owning it expresses the claim itself with little else attached. proxy: stands in for something the claim is about that can't be owned or wasn't specified, and moves for other reasons too. added: exposure the claim doesn't call for.",
+      ),
+      stands_for: z.string().describe("For a proxy, what it stands in for, e.g. 'SpaceX (private)'. Empty otherwise."),
+      note: z.string().describe("One short sentence on the fit."),
+    }),
+  ),
+  not_investable: z
+    .array(z.object({ part: z.string().describe("A part of the post's claim."), why: z.string().describe("Why no listed security expresses it directly.") }))
+    .describe("Parts of the claim the portfolio can only approximate or leave out. Empty if none."),
+  summary: z.string().describe("One plain sentence on how faithfully the portfolio expresses the post."),
+});
+export type Fidelity = z.infer<typeof Fidelity>;
