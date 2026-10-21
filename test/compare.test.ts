@@ -529,6 +529,11 @@ describe("fidelity", () => {
     assert.deepEqual(r.value, { named: 60 / 90, direct: 0, proxy: 30 / 90, added: 0 });
   });
 
+  it("ignores a label for the cash line", () => {
+    const r = fidelityShares({ holdings: [label("BRK-B", "named"), label("UFO", "proxy"), label("Cash", "added")], not_investable: [], summary: "" }, p);
+    assert.ok(r.ok && r.value.added === 0);
+  });
+
   it("rejects labels that don't cover each holding exactly once", () => {
     const f = (...h: ReturnType<typeof label>[]) => fidelityShares({ holdings: h, not_investable: [], summary: "" }, p);
     const missing = f(label("BRK-B", "named"));

@@ -159,13 +159,15 @@ export type FidelityResult = {
 };
 
 /// Labels must cover each holding exactly once; otherwise the shares would
-/// silently misstate the portfolio.
+/// silently misstate the portfolio. A label for the cash line (which the
+/// prompt lists alongside the holdings) is ignored: cash isn't invested.
 export function fidelityShares(f: Fidelity, p: Portfolio): Result<Record<FidelityLink, number>, "invalid_request"> {
   const held = new Map(p.positions.map((x) => [tickerKey(x.ticker), x.weight]));
   const seen = new Set<string>();
   const shares: Record<FidelityLink, number> = { named: 0, direct: 0, proxy: 0, added: 0 };
   const invested = p.positions.reduce((s, x) => s + x.weight, 0);
   for (const h of f.holdings) {
+    if (h.ticker.trim().toLowerCase() === "cash") continue;
     const k = tickerKey(h.ticker);
     if (!held.has(k)) return err("invalid_request", `Labeled ${h.ticker}, which the portfolio doesn't hold.`);
     if (seen.has(k)) return err("invalid_request", `Labeled ${h.ticker} twice.`);
