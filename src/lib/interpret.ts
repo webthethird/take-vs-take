@@ -27,7 +27,7 @@ export const ANALYZE_PROMPT_VERSION = "analyze-v2";
 export const DRAFT_PROMPT_VERSION = "draft-v1";
 /// Author-named readings: the same prompt plus the "named" style. A separate
 /// version, so inferred readings keep their exact prompt and cached drafts.
-export const DRAFT_NAMED_PROMPT_VERSION = "draft-named-v1";
+export const DRAFT_NAMED_PROMPT_VERSION = "draft-named-v2";
 export const MAX_REPAIRS = 2;
 
 // ── Prompts ──────────────────────────────────────────────────────────────
@@ -116,7 +116,11 @@ export const DRAFT_NAMED_SYSTEM = `${DRAFT_SYSTEM}
 The interpretation you're given is built from securities the post itself names, so one more concentration style is available, and usually fits best:
 - named: ${NAMED.min}–${NAMED.max} positions, at most ${NAMED.capShare * 100}% of the invested share in any one name.
 
-Hold the named securities as core. A portfolio needs at least ${NAMED.min} positions, so if the post names only one investable security, add the single closest stand-in for the rest of the post's claim (for example, something it names that can't be bought directly), in a lower tier, and say in its rationale that it is a stand-in. Don't pad with funds that merely contain the named stock.`;
+Hold the named securities as core. A portfolio needs at least ${NAMED.min} positions, so if the post names only one investable security, add one more position in a lower tier, chosen in this order:
+1. A stand-in for something else the post names or claims that can't be bought directly, such as a listed fund holding a private company the post names. Say in its rationale that it is a stand-in.
+2. Otherwise, a broad fund for the named security's own sector, so the second position adds as little new exposure as possible.
+
+Never add something the post argues against, dismisses or treats as competition. Don't add a fund whose main exposure is unrelated to the post just because it happens to hold the named stock.`;
 
 function renderPost(input: ThesisInput): string {
   const d = new Date(input.created_at);
