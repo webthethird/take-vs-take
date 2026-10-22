@@ -147,6 +147,9 @@ describe("compare", () => {
     const preFreeze = reads.filter((x) => x.end < "2026-07-16");
     assert.ok(preFreeze.length >= 8);
     assert.ok(rep.caveats.some((c) => /postdate the interpretation model's training cutoff/.test(c)));
+    // deps.end is a pin: reads stop there, and the report says so.
+    assert.ok(reads.every((x) => x.end <= "2026-10-16"));
+    assert.ok(rep.caveats.some((c) => c.startsWith(`Results run through ${rep.window!.end}, the end date fixed for this pair`)));
   });
 
   it("by default stores nothing derived from prices: only the frozen runs", async () => {

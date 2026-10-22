@@ -20,5 +20,7 @@ export type PostView = { text: string; author_name: string | null; text_verified
 /// start, then exactly one `result` or `error`.
 export type CompareEvent =
   | { type: "stage"; stage: Stage }
-  | { type: "result"; report: ReportView; posts: { A: PostView; B: PostView } }
+  /// pinned_end: the fixed end date this example ran through, or null when
+  /// it ran through the latest prices.
+  | { type: "result"; report: ReportView; posts: { A: PostView; B: PostView }; pinned_end: string | null }
   | { type: "error"; error: string; message: string; side?: "a" | "b" | "both" };

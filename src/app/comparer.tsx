@@ -41,13 +41,13 @@ export function Comparer({ pairs }: { pairs: DemoPair[] }) {
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState<{ message: string; side?: string } | null>(null);
 
-  async function run(urlA = a, urlB = b) {
+  async function run(urlA = a, urlB = b, latest = false) {
     setBusy(true);
     setStages([]);
     setResult(null);
     setError(null);
     try {
-      const res = await fetch("/api/compare", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ a: urlA, b: urlB }) });
+      const res = await fetch("/api/compare", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ a: urlA, b: urlB, ...(latest ? { latest } : {}) }) });
       if (!res.ok || !res.body) {
         const e = (await res.json().catch(() => null)) as CompareEvent | null;
         setError(e?.type === "error" ? { message: e.message, side: e.side } : { message: `Request failed (${res.status}).` });
@@ -118,6 +118,14 @@ export function Comparer({ pairs }: { pairs: DemoPair[] }) {
           </button>
         </form>
         {error && <p className="error">{localTimes(error.message)}</p>}
+        {result?.pinned_end && !busy && (
+          <p className="pinned">
+            This example runs through {result.pinned_end}, a fixed date, so its numbers stay the same between runs.{" "}
+            <button type="button" onClick={() => void run(a, b, true)}>
+              Rerun with prices through today
+            </button>
+          </p>
+        )}
         {(busy || (stages.length > 0 && !result)) && (
           <ol className="stages">
             {STAGES.filter((s) => stages.includes(s.key) || busy).map((s) => {

@@ -88,10 +88,11 @@ export function etDate(instant: Date): string {
 
 // ── Fixture source ───────────────────────────────────────────────────────
 
-/// In-memory bars for tests. Keyed by canonical ticker.
+/// In-memory bars for tests. Keyed by canonical ticker. The default fetch
+/// time is after every test range, so cachedSource treats entries as complete.
 export function fixtureSource(
   data: Record<string, PriceBar[]>,
-  fetchedAt = "2026-01-01T00:00:00.000Z",
+  fetchedAt = "2027-01-01T00:00:00.000Z",
 ): PriceSource & { calls: number } {
   const byKey = new Map(Object.entries(data).map(([t, bars]) => [tickerKey(t), bars]));
   const src = {
@@ -120,11 +121,13 @@ export function fixtureSource(
 // two fetches could carry a fake jump at the seam.
 //
 // A cached series is a pinned input, not a convenience: rerunning a pinned
-// comparison must read the same bars. That means an entry for a range ending
-// "today" is not refreshed automatically. Pass refresh to re-fetch.
+// comparison must read the same bars. The one exception: an entry fetched on
+// or before its own end date (ET) may be missing that day's close, so it is
+// treated as a miss and refetched; once fetched after the end date, it is
+// served as is. Pass refresh to re-fetch regardless.
 //
-// Not wired into the app or CLIs: Tiingo's Starter plan forbids storing its
-// data (Terms 1.6(a)). Kept, tested, for a plan or provider that allows it.
+// Used only on a plan whose terms allow storing data (see tiingo.ts):
+// Tiingo's Starter plan forbids it (Terms 1.6(a)).
 
 export function cachedSource(inner: PriceSource, dir: string, opts: { refresh?: boolean } = {}): PriceSource & { hits: number; misses: number } {
   const pathFor = (ticker: string, start: string, end: string) => {
@@ -147,11 +150,12 @@ export function cachedSource(inner: PriceSource, dir: string, opts: { refresh?: 
       if (!opts.refresh) {
         try {
           const parsed = PriceSeries.safeParse(JSON.parse(await readFile(path, "utf8")));
-          if (parsed.success) {
+          if (parsed.success && etDate(new Date(parsed.data.fetched_at)) > end) {
             src.hits++;
             return { ok: true, value: parsed.data };
           }
-          // Shape drifted from the schema: treat as a miss and overwrite.
+          // Shape drifted from the schema, or possibly incomplete: treat as
+          // a miss and overwrite.
         } catch {
           // Missing or unreadable: miss.
         }

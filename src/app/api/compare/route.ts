@@ -1,4 +1,7 @@
-// POST /api/compare  { a: "<X url>", b: "<X url>" }
+// POST /api/compare  { a: "<X url>", b: "<X url>", latest?: true }
+//
+// An example pair runs through its pinned end date (window_end in
+// fixtures/candidates.md) unless `latest` asks for prices through today.
 //
 // Runs the whole pipeline on the server and streams progress as NDJSON.
 // This file only ever runs in Node on the server: API keys stay here.
@@ -15,13 +18,13 @@ import { z } from "zod";
 import type { CompareEvent } from "../../../lib/api.js";
 import { compare } from "../../../lib/compare.js";
 import { realDeps } from "../../../server/deps.js";
-import { resolvePosts } from "../../../server/posts.js";
+import { pinnedWindowEnd, resolvePosts } from "../../../server/posts.js";
 import { reportView } from "../../../server/view.js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const Body = z.object({ a: z.string().max(500), b: z.string().max(500) });
+const Body = z.object({ a: z.string().max(500), b: z.string().max(500), latest: z.boolean().optional() });
 
 let running = false;
 
@@ -41,11 +44,13 @@ export async function POST(req: Request): Promise<Response> {
 
   const posts = await resolvePosts(body.data.a, body.data.b);
   if (!posts.ok) return json(400, { type: "error", error: posts.error, message: posts.message, side: posts.side });
+  const pin = body.data.latest ? { ok: true as const, value: null } : await pinnedWindowEnd(posts.value[0].post_id, posts.value[1].post_id);
+  if (!pin.ok) return json(500, { type: "error", error: "config", message: pin.message });
   if (running) return json(409, { type: "error", error: "busy", message: "A comparison is already running. Try again when it finishes." });
 
   let deps;
   try {
-    deps = realDeps();
+    deps = realDeps(pin.value ? { end: pin.value } : {});
   } catch (e) {
     return json(500, { type: "error", error: "config", message: (e as Error).message });
   }
@@ -60,7 +65,7 @@ export async function POST(req: Request): Promise<Response> {
         const r = await compare({ ...deps.deps, onStage: (stage) => send({ type: "stage", stage }) }, a, b);
         if (r.ok) {
           const view = (p: typeof a) => ({ text: p.text, author_name: p.author_name ?? null, text_verified: p.provenance.text_verified });
-          send({ type: "result", report: reportView(r.value), posts: { A: view(a), B: view(b) } });
+          send({ type: "result", report: reportView(r.value), posts: { A: view(a), B: view(b) }, pinned_end: pin.value });
         } else {
           send({ type: "error", error: r.error, message: r.message });
         }

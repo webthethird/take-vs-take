@@ -31,6 +31,7 @@ Fields per pair:
 - `a_label`, `b_label`: your one-line summary. **For organizing only; never shown to the model.**
 - `a_depends_on`, `b_depends_on`: media/link/parent context the text relies on, or `none`
 - `found_via`: how you found it (e.g. X Advanced Search query)
+- `window_end`: the last day the backtest runs through, fixed so the pair's numbers don't drift between runs (YYYY-MM-DD, a completed trading day). Moving it later is a deliberate, logged edit. Empty means through the latest prices. The UI can still rerun through today on request.
 - `why`: why this pair is worth testing
 - `notes`
 
@@ -49,6 +50,7 @@ The post date is **not** a field: it is computed from the post ID and can't be w
 - b_label: AI spending will keep accelerating
 - b_depends_on: chart image; long post, oEmbed truncates it
 - found_via: (developer, X)
+- window_end: 2026-10-21
 - why: Broad but investable disagreement.
 - notes: Checked 2026-10-19: A is 2026-07-03, B is 2026-07-16, both after the model's training cutoff. B's text is narrower than its label: it argues a shift to cheaper models moves margins from AI labs to cloud providers (bullish for AI infrastructure). A argues the hyperscalers' AI returns are meager and masked by their other businesses. Both are about hyperscalers, reached from opposite directions.
 
@@ -63,6 +65,7 @@ The post date is **not** a field: it is computed from the post ID and can't be w
 - b_label: Clean energy will displace them
 - b_depends_on: a t.co link (content unknown)
 - found_via:
+- window_end: 2026-10-21
 - why: Intuitively opposing economic exposures. Our first real-data check showed oil moving against the market in Oct 2025–Oct 2026, a good test of the co-movement explanation.
 - notes: Checked 2026-10-19: A 2026-08-10, B 2026-07-28, both after the training cutoff. A cites data; B states its view with less supporting argument in the text itself.
 
@@ -77,6 +80,7 @@ The post date is **not** a field: it is computed from the post ID and can't be w
 - b_label: Nvidia's moat is eroding (AMD, Huawei)
 - b_depends_on: none; long post, oEmbed truncates it
 - found_via:
+- window_end: 2026-10-21
 - why: Directly opposing views on Nvidia's moat. Bearish side tests long-only translation (Huawei isn't US-listed).
 - notes: Recategorized related -> opposing on 2026-10-19, before any analysis: the replacement A makes this a direct disagreement. Original A (@tunguz) rejected; see log. A 2026-08-05, B 2026-07-20.
 
@@ -91,6 +95,7 @@ The post date is **not** a field: it is computed from the post ID and can't be w
 - b_label: Tesla is overvalued; Chinese robotaxis will win
 - b_depends_on: image; oEmbed truncates it
 - found_via: B: X search for Tesla-bear posts in the poster's own voice
+- window_end: 2026-10-21
 - why: Two interpretations of automotive disruption. A bearish-on-Tesla reading tests long-only translation (Supertake's own builder turned "Tesla is overvalued" into long rivals, including NVDA and GOOGL).
 - notes: B replaced and relabeled 2026-10-19, before any analysis (was 'Legacy manufacturers are undervalued'; no own-voice legacy-auto bull found). A 2026-08-21, B 2026-07-26. A includes SpaceX, which may not be investable. B's figures are the author's assertions, not checked. B's framing is promotional but it makes two substantive arguments.
 
@@ -105,6 +110,7 @@ The post date is **not** a field: it is computed from the post ID and can't be w
 - b_label: AI will expand SaaS profitability
 - b_depends_on: chart image + link; last third is a paid-newsletter promotion and a holdings disclosure
 - found_via:
+- window_end: 2026-10-21
 - why: Competing theses with potentially surprising portfolio overlap.
 - notes: Checked 2026-10-19: A 2026-08-24, B 2026-08-16. A says AI doesn't replace CRM; B names Salesforce and ServiceNow, so overlapping holdings from opposite views are possible. B's promotion stays in the text (verbatim rule); don't feature B in a public demo without deciding that separately.
 
@@ -119,6 +125,7 @@ The post date is **not** a field: it is computed from the post ID and can't be w
 - b_label: long $META
 - b_depends_on:
 - found_via:
+- window_end: 2026-10-21
 - why: Does the system report independence as independence, not as disagreement?
 - expected_relationship: none
 - expected co-movement: none
@@ -135,6 +142,7 @@ The post date is **not** a field: it is computed from the post ID and can't be w
 - b_label: any ordinary investable take
 - b_depends_on:
 - found_via:
+- window_end: 2026-10-21
 - why: The system must abstain on the uninvestable side instead of inventing tickers.
 - notes:
 
@@ -149,6 +157,7 @@ The post date is **not** a field: it is computed from the post ID and can't be w
 - b_label: bullish on electricity generation as input to data centers
 - b_depends_on: chart image; the text states the claim without it
 - found_via:
+- window_end: 2026-10-21
 - why: Replaces the related slot pair-03 used to fill. Tests different holdings with potentially similar exposures, and claims that can both be true.
 - expected_relationship: opinions are similarly bullish about data center inputs
 - expected_co_movement: no clear relationship, because the investments will be in very different industries

@@ -103,6 +103,19 @@ describe("cachedSource", () => {
     if (r.ok) assert.equal(r.value.bars[0]!.adjClose, 100);
   });
 
+  it("refetches an entry fetched on or before its own end date (ET), which may lack that day's close", async () => {
+    const dir = await freshDir();
+    // 2026-09-30 20:30 ET: the end date itself, after the close but perhaps before the data landed.
+    await cachedSource(fixtureSource({ SPY }, "2026-10-01T00:30:00.000Z"), dir).daily("SPY", "2026-09-24", "2026-09-30");
+    const next = fixtureSource({ SPY }, "2026-10-01T14:00:00.000Z");
+    const cache = cachedSource(next, dir);
+    await cache.daily("SPY", "2026-09-24", "2026-09-30");
+    assert.equal(next.calls, 1, "fetched on the end date: a miss");
+    const later = fixtureSource({ SPY });
+    await cachedSource(later, dir).daily("SPY", "2026-09-24", "2026-09-30");
+    assert.equal(later.calls, 0, "fetched the day after: served from cache");
+  });
+
   it("keys on the exact range; never splices", async () => {
     const inner = fixtureSource({ SPY });
     const cache = cachedSource(inner, await freshDir());

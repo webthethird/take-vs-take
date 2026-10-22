@@ -14,6 +14,7 @@ import { compare, type ComparisonReport } from "../lib/compare.js";
 import { loadFixture } from "../lib/fixture.js";
 import { anthropicTransport } from "../lib/llm.js";
 import { tiingoFromEnv } from "../lib/tiingo.js";
+import { pinnedWindowEnd } from "../server/posts.js";
 import { round1 } from "../lib/weights.js";
 import { authorNamed } from "../lib/readings.js";
 
@@ -39,12 +40,16 @@ if (!a.ok) throw new Error(`${fa}: ${a.message}`);
 if (!b.ok) throw new Error(`${fb}: ${b.message}`);
 
 const { tiingo, prices, persist } = tiingoFromEnv();
+// An example pair's pinned end date, so its numbers don't drift.
+const pin = await pinnedWindowEnd(a.value.post_id, b.value.post_id);
+if (!pin.ok) throw new Error(pin.message);
 const r = await compare(
   {
     llm: { transport: anthropicTransport(), budgetUsd: budget, cacheDir: ".cache/llm", ledgerPath: ".cache/llm-ledger.jsonl" },
     prices,
     outDir: ".cache/runs",
     persistReport: persist,
+    ...(pin.value ? { end: pin.value } : {}),
     alternates,
   },
   a.value,

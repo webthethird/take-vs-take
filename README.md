@@ -48,7 +48,9 @@ post B ─▶ analyze ─▶ draft ─▶ weight ─┘                    │
 - **Common window.** Both portfolios enter at the close of the first trading
   day after the later post's date (US Eastern) and are held to the same end
   date (buy and hold, adjusted closes, uninvested cash returns 0%). A thesis
-  carried forward from an older post is flagged.
+  carried forward from an older post is flagged. Example pairs run through a
+  pinned end date (`window_end` in `fixtures/candidates.md`), so their
+  numbers don't change between runs; the page can rerun one through today.
 - **Co-movement.** Daily-return correlation over the year *before* the posts
   (raw, and beyond market exposure), with a 95% interval. A direction is
   stated only when the interval excludes zero.

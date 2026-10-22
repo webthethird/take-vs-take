@@ -281,7 +281,9 @@ export type CompareDeps = {
   prices: PriceSource;
   outDir: string;
   now?: () => Date;
-  /// Last trading day to evaluate through; defaults to the benchmark's latest.
+  /// Pinned last day to evaluate through (an example pair's window_end).
+  /// Unset, the window runs through the latest prices, so results drift as
+  /// days pass and every run refetches.
   end?: string;
   onStage?: (s: Stage) => void;
   /// Save the report next to the frozen runs. Only when the price plan's
@@ -512,6 +514,9 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
   const w = commonWindow({ createdA: postA.created_at, createdB: postB.created_at, benchmark: bench.bars });
   if (!w.ok) return err("window_error", w.message);
   report.window = w.value;
+  if (deps.end) {
+    caveats.push(`Results run through ${w.value.end}, the end date fixed for this pair so that rerunning it gives the same numbers. Later prices aren't included.`);
+  }
   if (w.value.carriedForward) {
     caveats.push(`The posts are ${Math.round(w.value.gapDays)} days apart. The earlier thesis is evaluated as of the later post's date; its author made no new call then.`);
   }
