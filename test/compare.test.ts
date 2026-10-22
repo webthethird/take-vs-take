@@ -129,6 +129,17 @@ const happy = [
 ];
 
 describe("compare", () => {
+  it("caches calls carrying X-fetched content in the expiring cache, and only those", async () => {
+    const { deps } = await setup(happy);
+    const fromX = { ...postB, provenance: { source: "x_api" as const, text_verified: true, retrieved_at: "2026-10-19T00:00:00.000Z" } };
+    const r = await compare(deps, postA, fromX);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    const files = async (d: string) => (await readdir(d)).filter((f) => f.endsWith(".json"));
+    // A (a saved fixture): analysis, draft, fidelity. B and everything joint: analysis, draft, alignment, drivers, fidelity.
+    assert.equal((await files(deps.llm.cacheDir)).length, 3);
+    assert.equal((await files(join(deps.llm.cacheDir, "expiring"))).length, 5);
+  });
+
   it("runs the full pipeline: freeze first, then outcomes", async () => {
     const { deps, reads } = await setup(happy);
     const r = await compare(deps, postA, postB);

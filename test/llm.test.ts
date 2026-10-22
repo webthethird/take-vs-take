@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { z } from "zod";
 import {
+  EXPIRING_DIR,
   costUsd,
   ledgerTotal,
   structuredCall,
+  sweepLlmCache,
   worstCaseUsd,
   type LlmConfig,
   type ModelRequest,
@@ -201,5 +203,38 @@ describe("structuredCall", () => {
     const line = JSON.parse((await readFile(cfg.ledgerPath, "utf8")).trim());
     assert.equal(line.model_requested, "claude-opus-5-5");
     assert.equal(line.model_served, "claude-opus-5");
+  });
+});
+
+describe("expiring cache entries", () => {
+  it("replays an expiring entry until it expires, then pays again and deletes the old one", async () => {
+    const t = scripted([{ parsed: { answer: "first" } }, { parsed: { answer: "second" } }]);
+    const base = await config(t);
+    let now = new Date("2026-10-01T00:00:00Z");
+    const cfg = { ...base, cacheMaxAgeDays: 30, now: () => now };
+    assert.ok((await structuredCall(cfg, spec)).ok);
+    assert.equal((await readdir(join(cfg.cacheDir, EXPIRING_DIR))).length, 1);
+
+    now = new Date("2026-10-30T23:00:00Z");
+    const replay = await structuredCall(cfg, spec);
+    assert.ok(replay.ok && replay.value.meta.cached && replay.value.value.answer === "first");
+
+    now = new Date("2026-10-31T00:00:01Z");
+    const fresh = await structuredCall(cfg, spec);
+    assert.ok(fresh.ok && !fresh.value.meta.cached && fresh.value.value.answer === "second");
+    assert.equal(t.requests.length, 2);
+  });
+
+  it("the sweep deletes expired entries only, and never touches non-expiring ones", async () => {
+    const t = scripted([{ parsed: { answer: "x" } }, { parsed: { answer: "y" } }]);
+    const base = await config(t);
+    await structuredCall({ ...base, now: () => new Date("2026-01-01T00:00:00Z") }, spec);
+    await structuredCall({ ...base, cacheMaxAgeDays: 30, now: () => new Date("2026-01-01T00:00:00Z") }, { ...spec, system: "other" });
+    assert.equal(await sweepLlmCache(base.cacheDir, new Date("2026-01-15T00:00:00Z")), 0);
+    assert.equal(await sweepLlmCache(base.cacheDir, new Date("2026-02-01T00:00:00Z")), 1);
+    assert.deepEqual(await readdir(join(base.cacheDir, EXPIRING_DIR)), []);
+    // The plain entry is still there and still replays.
+    const again = await structuredCall({ ...base, now: () => new Date("2027-01-01T00:00:00Z") }, spec);
+    assert.ok(again.ok && again.value.meta.cached);
   });
 });

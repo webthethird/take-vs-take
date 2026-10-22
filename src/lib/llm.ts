@@ -13,7 +13,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { createHash } from "node:crypto";
-import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { z } from "zod";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
@@ -176,6 +176,11 @@ export type LlmConfig = {
   ledgerPath: string;
   model?: string;
   now?: () => Date;
+  /// Cache entries written under this config expire after this many days and
+  /// are then deleted. Set for calls carrying content fetched from X, which
+  /// may be kept only as long as the X responses themselves. Unset, entries
+  /// never expire.
+  cacheMaxAgeDays?: number;
 };
 
 export type CallSpec<S extends z.ZodType> = {
@@ -206,7 +211,39 @@ export type CallResult<T> = {
 
 export type LlmError = "budget_exceeded" | "refused" | "truncated" | "parse_failed" | "api_error";
 
-type CacheEntry = { response: ModelResponse; created_at: string; model_requested: string; prompt_version: string };
+type CacheEntry = { response: ModelResponse; created_at: string; model_requested: string; prompt_version: string; expires_at?: string };
+
+/// Expiring entries live in their own subdirectory, so the sweep reads only
+/// those, not the whole cache.
+export const EXPIRING_DIR = "expiring";
+/// Last sweep per cache directory, so a long-running server still sweeps
+/// daily without rereading the directory on every call.
+const lastSweep = new Map<string, number>();
+
+/// Delete expired entries. structuredCall runs it at most once a day per
+/// cache directory; callable directly too.
+export async function sweepLlmCache(cacheDir: string, now: Date = new Date()): Promise<number> {
+  const dir = join(cacheDir, EXPIRING_DIR);
+  let files: string[];
+  try {
+    files = await readdir(dir);
+  } catch {
+    return 0;
+  }
+  let removed = 0;
+  for (const f of files.filter((x) => x.endsWith(".json"))) {
+    const path = join(dir, f);
+    try {
+      const e = JSON.parse(await readFile(path, "utf8")) as CacheEntry;
+      if (e.expires_at && Date.parse(e.expires_at) > now.getTime()) continue;
+    } catch {
+      // Unreadable: delete it too.
+    }
+    await rm(path, { force: true });
+    removed++;
+  }
+  return removed;
+}
 
 export async function structuredCall<S extends z.ZodType>(
   cfg: LlmConfig,
@@ -220,7 +257,12 @@ export async function structuredCall<S extends z.ZodType>(
   const key = createHash("sha256")
     .update(JSON.stringify([model, spec.promptVersion, spec.system, spec.messages, effort, maxTokens, spec.nonce ?? null]))
     .digest("hex");
-  const cachePath = join(cfg.cacheDir, `${key}.json`);
+  const expiring = cfg.cacheMaxAgeDays !== undefined;
+  const cachePath = expiring ? join(cfg.cacheDir, EXPIRING_DIR, `${key}.json`) : join(cfg.cacheDir, `${key}.json`);
+  if (expiring && now().getTime() - (lastSweep.get(cfg.cacheDir) ?? -Infinity) >= 86_400_000) {
+    lastSweep.set(cfg.cacheDir, now().getTime());
+    await sweepLlmCache(cfg.cacheDir, now());
+  }
 
   const finish = (resp: ModelResponse, cached: boolean, cost: number): Result<CallResult<z.infer<S>>, LlmError> => {
     if (resp.stopReason === "refusal") {
@@ -250,7 +292,8 @@ export async function structuredCall<S extends z.ZodType>(
 
   try {
     const hit = JSON.parse(await readFile(cachePath, "utf8")) as CacheEntry;
-    return finish(hit.response, true, 0);
+    if (!hit.expires_at || Date.parse(hit.expires_at) > now().getTime()) return finish(hit.response, true, 0);
+    await rm(cachePath, { force: true });
   } catch {
     // Miss.
   }
@@ -293,9 +336,15 @@ export async function structuredCall<S extends z.ZodType>(
   // today should be retried, not replayed.
   const result = finish(resp, false, cost);
   if (result.ok) {
-    await mkdir(cfg.cacheDir, { recursive: true });
+    await mkdir(dirname(cachePath), { recursive: true });
     const tmp = `${cachePath}.${process.pid}.tmp`;
-    const record: CacheEntry = { response: resp, created_at: now().toISOString(), model_requested: model, prompt_version: spec.promptVersion };
+    const record: CacheEntry = {
+      response: resp,
+      created_at: now().toISOString(),
+      model_requested: model,
+      prompt_version: spec.promptVersion,
+      ...(expiring ? { expires_at: new Date(now().getTime() + cfg.cacheMaxAgeDays! * 86_400_000).toISOString() } : {}),
+    };
     await writeFile(tmp, JSON.stringify(record));
     await rename(tmp, cachePath);
   }

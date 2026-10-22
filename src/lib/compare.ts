@@ -35,6 +35,7 @@ import {
   type Rendered,
 } from "./interpret.js";
 import { structuredCall, type LlmConfig } from "./llm.js";
+import { X_CACHE_MAX_AGE_DAYS } from "./x.js";
 import {
   OVERLAP_VERSION,
   coMovementDirection,
@@ -325,6 +326,13 @@ export type SideResult =
   | { ok: true; value: Side }
   | { ok: false; error: CompareError; message: string; cause: string; attempts: Attempt[] };
 
+/// Model calls carrying content fetched from X are cached only as long as
+/// the X responses themselves (X_CACHE_MAX_AGE_DAYS); calls on saved
+/// fixtures keep their cache indefinitely.
+export function llmFor(cfg: LlmConfig, ...posts: Pick<PostInput, "provenance">[]): LlmConfig {
+  return posts.some((p) => p.provenance.source === "x_api") ? { ...cfg, cacheMaxAgeDays: X_CACHE_MAX_AGE_DAYS } : cfg;
+}
+
 export async function buildSide(
   deps: CompareDeps,
   gate: LookAheadGate,
@@ -334,8 +342,9 @@ export async function buildSide(
 ): Promise<SideResult> {
   const input = toThesisInput(post);
   const nonce = opts.nonce;
+  const llm = llmFor(deps.llm, post);
   deps.onStage?.({ stage: "analyze", side: label });
-  const a = await analyzeThesis(deps.llm, input, { nonce });
+  const a = await analyzeThesis(llm, input, { nonce });
   if (!a.ok) return { ...err("analysis_failed", `Side ${label}: ${a.error}: ${a.message}`), cause: a.error, attempts: a.attempts };
   const chosen = pickDefault(a.value.analysis);
   const model_default = chosen === a.value.analysis.default_interpretation ? null : a.value.analysis.default_interpretation;
@@ -347,7 +356,7 @@ export async function buildSide(
   const asOf = new Date(post.created_at);
   const check = priceTickerCheck(gate, asOf);
   deps.onStage?.({ stage: "draft", side: label });
-  const d = await draftPortfolio(deps.llm, input, analysis, analysis.default_interpretation, check, { nonce });
+  const d = await draftPortfolio(llm, input, analysis, analysis.default_interpretation, check, { nonce });
   if (!d.ok) return { ...err("draft_failed", `Side ${label}: ${d.error}: ${d.message}`), cause: d.error, attempts: [...a.attempts, ...d.attempts] };
   const attempts = [...a.attempts, ...d.attempts];
 
@@ -356,7 +365,7 @@ export async function buildSide(
   if (deps.alternates ?? false) {
     for (const i of analysis.interpretations) {
       if (i.id === analysis.default_interpretation) continue;
-      const x = await draftPortfolio(deps.llm, input, analysis, i.id, check, { nonce });
+      const x = await draftPortfolio(llm, input, analysis, i.id, check, { nonce });
       attempts.push(...x.attempts);
       alternates.push(x.ok ? { interpretation_id: i.id, portfolio: x.value.portfolio, error: null } : { interpretation_id: i.id, portfolio: null, error: `${x.error}: ${x.message}` });
     }
@@ -408,7 +417,7 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
 
   // Thesis alignment: after freezing, about the opinions only.
   let alignment: ComparisonReport["alignment"] = null;
-  const al = await structuredCall(deps.llm, {
+  const al = await structuredCall(llmFor(deps.llm, postA, postB), {
     promptVersion: ALIGN_PROMPT_VERSION,
     system: ALIGN_SYSTEM,
     schema: ThesisAlignment,
@@ -427,7 +436,7 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
     let cost = 0;
     for (let k = 0; k < (deps.driversSamples ?? DRIVERS_SAMPLES); k++) {
       // Sample 0 has no nonce, so it replays the single-sample cache.
-      const dr = await structuredCall(deps.llm, {
+      const dr = await structuredCall(llmFor(deps.llm, postA, postB), {
         promptVersion: DRIVERS_PROMPT_VERSION,
         system: DRIVERS_SYSTEM,
         schema: SharedDrivers,
@@ -456,7 +465,7 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
   for (const [f, post] of [[fa, postA], [fb, postB]] as const) {
     if (!f.portfolio) continue;
     deps.onStage?.({ stage: "fidelity", side: f.label });
-    const r = await structuredCall(deps.llm, {
+    const r = await structuredCall(llmFor(deps.llm, post), {
       promptVersion: FIDELITY_PROMPT_VERSION,
       system: FIDELITY_SYSTEM,
       schema: Fidelity,
