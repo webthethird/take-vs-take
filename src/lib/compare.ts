@@ -45,6 +45,7 @@ import { LookAheadGate, etDate, type PriceSeries, type PriceSource } from "./pri
 import { err, type Result } from "./result.js";
 import { Fidelity, SharedDrivers, ThesisAlignment, type FidelityLink, type PostInput, type ThesisAnalysis } from "./schema.js";
 import { WEIGHT_RULE_VERSION, type Portfolio } from "./weights.js";
+import { authorNamed } from "./readings.js";
 import { companyKey, tickerKey } from "./ticker.js";
 
 export const BENCHMARK = "SPY";
@@ -56,7 +57,7 @@ export const DRIVERS_PROMPT_VERSION = "drivers-v1";
 /// flipped it), so the step samples several and reports how they split.
 export const DRIVERS_SAMPLES = 3;
 export const FIDELITY_PROMPT_VERSION = "fidelity-v1";
-export const DEFAULT_RULE_VERSION = "default-v1";
+export const DEFAULT_RULE_VERSION = "default-v2";
 
 // ── Thesis alignment ─────────────────────────────────────────────────────
 
@@ -118,8 +119,8 @@ cash  ${p.cash_weight}%
 
 export function pickDefault(a: ThesisAnalysis): string | null {
   const chosen = a.interpretations.find((i) => i.id === a.default_interpretation);
-  if (!chosen || chosen.author_stated) return a.default_interpretation;
-  return a.interpretations.find((i) => i.author_stated)?.id ?? a.default_interpretation;
+  if (!chosen || authorNamed(a, chosen)) return a.default_interpretation;
+  return a.interpretations.find((i) => authorNamed(a, i))?.id ?? a.default_interpretation;
 }
 
 // ── Fidelity ─────────────────────────────────────────────────────────────
@@ -146,7 +147,7 @@ function renderForFidelity(post: PostInput, analysis: ThesisAnalysis, p: Portfol
 ${post.text}
 </post>
 <analysis>${JSON.stringify({ economic_claim: analysis.economic_claim, direction: analysis.direction, targets: analysis.targets })}</analysis>
-<reading>${JSON.stringify(reading ? { label: reading.label, expression: reading.expression, author_stated: reading.author_stated, gap_note: reading.gap_note } : null)}</reading>
+<reading>${JSON.stringify(reading ? { label: reading.label, expression: reading.expression, author_stated: authorNamed(analysis, reading), gap_note: reading.gap_note } : null)}</reading>
 <holdings>
 ${rows.join("\n")}
 cash  ${p.cash_weight}%
@@ -590,7 +591,7 @@ export function sensitivity(fa: FrozenRun, fb: FrozenRun, series: PriceSeries[],
         interpretation_id: r.id,
         label: i.label,
         is_default: r.id === f.analysis.default_interpretation,
-        author_stated: i.author_stated,
+        author_stated: authorNamed(f.analysis, i),
         stance_conflicts: stanceConflicts(f.analysis, r.portfolio),
         metrics: b.ok ? b.value.metrics : null,
         error: b.ok ? null : `${b.error}: ${b.message}`,

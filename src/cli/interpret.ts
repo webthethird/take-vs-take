@@ -17,6 +17,7 @@ import { LookAheadGate } from "../lib/prices.js";
 import { ThesisInput } from "../lib/schema.js";
 import { tiingoFromEnv } from "../lib/tiingo.js";
 import { round1 } from "../lib/weights.js";
+import { authorNamed } from "../lib/readings.js";
 
 const Fixture = z.object({
   id: z.string(),
@@ -73,7 +74,7 @@ for (const file of files) {
   console.log(`  status: ${an.status} ${match}\n  reason: ${an.status_reason}`);
   console.log(`  claim: ${an.economic_claim}  [${an.direction}]`);
   for (const i of an.interpretations) {
-    console.log(`  ${i.id === an.default_interpretation ? "*" : " "} ${i.id} ${i.label}${i.author_stated ? "" : " (inferred)"} — ${i.expression}\n       gap: ${i.gap_note}`);
+    console.log(`  ${i.id === an.default_interpretation ? "*" : " "} ${i.id} ${i.label}${authorNamed(an, i) ? "" : " (inferred)"} — ${i.expression}\n       gap: ${i.gap_note}`);
   }
 
   const record: Record<string, unknown> = { fixture: basename(file), nonce: nonce ?? null, analysis: a.value };

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { DRIVERS_SYSTEM, FIDELITY_SYSTEM, compare, fidelityShares, findings, pickDefault, type ComparisonReport } from "../src/lib/compare.js";
+import { authorNamed } from "../src/lib/readings.js";
 import type { Portfolio } from "../src/lib/weights.js";
 import type { LlmConfig } from "../src/lib/llm.js";
 import { fixtureSource, type PriceBar, type PriceSource } from "../src/lib/prices.js";
@@ -524,7 +525,8 @@ describe("stance conflicts", () => {
 
 describe("default reading", () => {
   const reading = (id: string, author_stated: boolean) => ({ id, label: id, expression: id, author_stated, gap_note: "" });
-  const an = (def: string | null, ...rs: ReturnType<typeof reading>[]): ThesisAnalysis => ({ ...analysis("x", "x"), interpretations: rs, default_interpretation: def });
+  const named = [{ ticker: "RA", stance: "positive" as const }];
+  const an = (def: string | null, ...rs: ReturnType<typeof reading>[]): ThesisAnalysis => ({ ...analysis("x", "x"), targets: named, interpretations: rs, default_interpretation: def });
 
   it("prefers a reading built from what the author named", () => {
     assert.equal(pickDefault(an("i1", reading("i1", false), reading("i2", true))), "i2");
@@ -533,8 +535,15 @@ describe("default reading", () => {
     assert.equal(pickDefault({ ...an(null), status: "not_investable" }), null);
   });
 
+  it("doesn't count a reading as author-named unless the post is positive about a ticker", () => {
+    const loose = an("i1", reading("i1", false), reading("i2", true));
+    assert.equal(pickDefault({ ...loose, targets: [] }), "i1", "author_stated alone, no targets");
+    assert.equal(pickDefault({ ...loose, targets: [{ ticker: "MOH", stance: "negative" }] }), "i1", "only a negative target");
+    assert.equal(authorNamed({ targets: [{ ticker: "HOOD", stance: "positive" }] }, { author_stated: false }), false);
+  });
+
   it("drafts the author-named reading and records the model's pick", async () => {
-    const broad: ThesisAnalysis = { ...analysis("rails", "Buy the railroads."), interpretations: [reading("i1", false), reading("i2", true)], default_interpretation: "i1" };
+    const broad: ThesisAnalysis = { ...analysis("rails", "Buy the railroads."), targets: named, interpretations: [reading("i1", false), reading("i2", true)], default_interpretation: "i1" };
     const { deps, t } = await setup([broad, draft(["RA", "RB", "RC", "RD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment, drivers, fidA, fidB]);
     const r = await compare(deps, postA, postB);
     assert.ok(r.ok, !r.ok ? r.message : "");

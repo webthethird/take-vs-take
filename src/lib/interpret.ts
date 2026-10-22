@@ -19,6 +19,7 @@ import {
   type ThesisInput,
 } from "./schema.js";
 import { tickerKey } from "./ticker.js";
+import { authorNamed } from "./readings.js";
 import { CASH, NAMED, STYLE, TIER_POINTS, weightPortfolio, type Portfolio } from "./weights.js";
 import { structuredCall, type CallResult, type LlmConfig, type LlmError } from "./llm.js";
 import type { z } from "zod";
@@ -285,6 +286,7 @@ export async function draftPortfolio(
     return { ...err("invalid_request", `No investable interpretation "${interpretationId}" to draft.`), attempts: [] };
   }
 
+  const named = authorNamed(analysis, interp);
   const user = [
     renderPost(input),
     `<analysis>\n${JSON.stringify({ economic_claim: analysis.economic_claim, direction: analysis.direction, subjects: analysis.subjects, horizon: analysis.horizon, missing: analysis.missing }, null, 2)}\n</analysis>`,
@@ -295,7 +297,7 @@ export async function draftPortfolio(
   let unavailable: string | null = null;
   const r = await callWithRepair(
     cfg,
-    interp.author_stated
+    named
       ? { promptVersion: DRAFT_NAMED_PROMPT_VERSION, system: DRAFT_NAMED_SYSTEM, schema: PortfolioDraft, nonce: opts.nonce }
       : { promptVersion: DRAFT_PROMPT_VERSION, system: DRAFT_SYSTEM, schema: PortfolioDraft, nonce: opts.nonce },
     user,
@@ -303,7 +305,7 @@ export async function draftPortfolio(
       // The id is ours to set, not the model's.
       const draft = { ...d, interpretation_id: interpretationId };
       const problems: string[] = [];
-      if (draft.concentration === "named" && !interp.author_stated) {
+      if (draft.concentration === "named" && !named) {
         problems.push('The "named" style is only for readings built from what the author named. Choose concentrated, balanced or diversified.');
       }
       const w = weightPortfolio(draft);

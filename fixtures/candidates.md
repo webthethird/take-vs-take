@@ -112,24 +112,26 @@ The post date is **not** a field: it is computed from the post ID and can't be w
 
 - category: unrelated
 - subject: Control: independent theses
-- a_url:
-- a_label: e.g. oil demand will grow
+- a_url: https://x.com/IncomeSharks/status/2077459480963616779
+- a_label: long $HOOD
 - a_depends_on:
-- b_url:
-- b_label: e.g. cybersecurity spending will accelerate
+- b_url: https://x.com/jablamsky/status/2099566262431203737
+- b_label: long $META
 - b_depends_on:
 - found_via:
 - why: Does the system report independence as independence, not as disagreement?
+- expected_relationship: none
+- expected co-movement: none
 - notes:
 
 ## pair-07
 
 - category: negative_control
 - subject: Control: at least one uninvestable post
-- a_url:
+- a_url: https://x.com/realMAG1775/status/2099646554344743107
 - a_label: e.g. a joke, a moral or social opinion, or vague vibes
 - a_depends_on:
-- b_url:
+- b_url: https://x.com/srvc76/status/2099641452825346389
 - b_label: any ordinary investable take
 - b_depends_on:
 - found_via:
@@ -139,16 +141,18 @@ The post date is **not** a field: it is computed from the post ID and can't be w
 ## pair-08
 
 - category: related
-- subject: (open) compatible theses, similar exposures
-- a_url:
-- a_label: e.g. AI chip demand will keep growing
-- a_depends_on:
-- b_url:
-- b_label: e.g. AMD will gain share
-- b_depends_on:
+- subject: Inputs to AI data centers
+- a_url: https://x.com/ekwufinance/status/2078118055087931511
+- a_label: bullish on copper as an input to data center buildouts
+- a_depends_on: chart image (copper relative to the S&P); the text states the claim without it
+- b_url: https://x.com/srvc76/status/2099641452825346389
+- b_label: bullish on electricity generation as input to data centers
+- b_depends_on: chart image; the text states the claim without it
 - found_via:
 - why: Replaces the related slot pair-03 used to fill. Tests different holdings with potentially similar exposures, and claims that can both be true.
-- notes:
+- expected_relationship: opinions are similarly bullish about data center inputs
+- expected_co_movement: no clear relationship, because the investments will be in very different industries
+- notes: Added 2026-10-22. A is 2026-07-17, B is 2026-09-14: both after the model's training cutoff, 59 days apart (exercises the carried-forward caveat). Window from 2026-09-15 is short (~26 trading days as of today). B's full text opens with Moody's generation estimates but its own view is narrower: bullish on battery storage ("a Golden Age of Battery Storage. While market valuations disagree."). Fixtures written from full text pasted by the developer; oEmbed truncates both.
 
 ---
 

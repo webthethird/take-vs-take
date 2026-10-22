@@ -13,6 +13,7 @@ import { loadFixture } from "../lib/fixture.js";
 import { anthropicTransport, ledgerTotal } from "../lib/llm.js";
 import { tiingoFromEnv } from "../lib/tiingo.js";
 import { round1 } from "../lib/weights.js";
+import { authorNamed } from "../lib/readings.js";
 
 const args = process.argv.slice(2);
 const nIdx = args.indexOf("--samples");
@@ -85,7 +86,7 @@ function print(rep: ConsistencyReport) {
       const conflict = s.stance_conflicts.length ? ` [CONTRADICTS POST: ${s.stance_conflicts.join(", ")}]` : "";
       const ret = s.metrics ? `${pct(s.metrics.cumulativeReturn)}` : `n/a (${s.metrics_error})`;
       const holdings = s.same_portfolio_as !== null ? `same portfolio as #${s.same_portfolio_as}` : `${p.positions.map((x) => `${x.ticker} ${round1(x.weight)}`).join(", ")}, cash ${p.cash_weight}`;
-      console.log(`${head} "${i?.label}"${i?.author_stated ? "" : " (inferred)"}${conflict}  ${ret}\n       ${holdings}`);
+      console.log(`${head} "${i?.label}"${i && authorNamed(an, i) ? "" : " (inferred)"}${conflict}  ${ret}\n       ${holdings}`);
     }
     const sm = rep.summary[label];
     const ov = sm.holdings_overlap;

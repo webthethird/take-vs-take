@@ -15,6 +15,7 @@ import { loadFixture } from "../lib/fixture.js";
 import { anthropicTransport } from "../lib/llm.js";
 import { tiingoFromEnv } from "../lib/tiingo.js";
 import { round1 } from "../lib/weights.js";
+import { authorNamed } from "../lib/readings.js";
 
 const args = process.argv.slice(2);
 const alternates = args.includes("--alternates");
@@ -72,7 +73,7 @@ function print(rep: ComparisonReport) {
     console.log(`  status: ${an.status}  [${an.direction}]  ${an.status_reason}`);
     console.log(`  claim: ${an.economic_claim}`);
     if (an.targets.length) console.log(`  post's own targets: ${an.targets.map((t) => `${t.ticker} ${t.stance === "negative" ? "−" : "+"}`).join(", ")}`);
-    if (interp) console.log(`  built: "${interp.label}"${interp.author_stated ? " (author named these)" : " (AI-inferred)"}. Gap: ${interp.gap_note}`);
+    if (interp) console.log(`  built: "${interp.label}"${authorNamed(an, interp) ? " (author named these)" : " (AI-inferred)"}. Gap: ${interp.gap_note}`);
     const others = an.interpretations.filter((i) => i.id !== an.default_interpretation);
     if (others.length) console.log(`  other readings not built: ${others.map((i) => i.label).join("; ")}`);
     const p = s.portfolio;

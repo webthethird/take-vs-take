@@ -189,12 +189,20 @@ describe("draftPortfolio", () => {
   it("drafts author-named readings with their own prompt, which offers the named style", async () => {
     const two = draft([["UNP", "core"], ["CSX", "satellite"]], { concentration: "named" });
     const { cfg, t } = await cfgWith([two]);
-    const r = await draftPortfolio(cfg, input, goodAnalysis, "i1", allValid);
+    const named: ThesisAnalysis = { ...goodAnalysis, targets: [{ ticker: "UNP", stance: "positive" }] };
+    const r = await draftPortfolio(cfg, input, named, "i1", allValid);
     assert.ok(r.ok, !r.ok ? r.message : "");
     if (!r.ok) return;
     assert.equal(t.requests[0]!.system, DRAFT_NAMED_SYSTEM);
     assert.equal(r.value.attempts[0]!.prompt_version, DRAFT_NAMED_PROMPT_VERSION);
     assert.deepEqual(r.value.portfolio.positions.map((p) => p.weight), [67.5, 22.5]);
+  });
+
+  it("treats author_stated without a positive target as inferred", async () => {
+    // goodAnalysis: author_stated true, but the post names no ticker.
+    const { cfg, t } = await cfgWith([draft([["UNP", "core"], ["CSX", "core"], ["NSC", "core"], ["CP", "core"]])]);
+    assert.ok((await draftPortfolio(cfg, input, goodAnalysis, "i1", allValid)).ok);
+    assert.equal(t.requests[0]!.system, DRAFT_SYSTEM);
   });
 
   it("keeps inferred readings on the original prompt and refuses them the named style", async () => {

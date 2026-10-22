@@ -6,6 +6,7 @@ import { useState } from "react";
 import type { CompareEvent, PostView, ReportView } from "../lib/api.js";
 import type { FidelityResult, FrozenRun, Stage } from "../lib/compare.js";
 import type { FidelityLink, SharedDrivers } from "../lib/schema.js";
+import { authorNamed } from "../lib/readings.js";
 import { tickerKey } from "../lib/ticker.js";
 import type { DemoPair } from "../server/posts.js";
 import { PerformanceChart } from "./chart.js";
@@ -375,7 +376,7 @@ function SideCard({ side, post, color, ret, fidelity }: { side: FrozenRun; post:
         <>
           <h3>How it was turned into a portfolio</h3>
           <p>
-            <strong>{reading.label}</strong> <span className="tag">{reading.author_stated ? "the post names these" : "AI-inferred"}</span>
+            <strong>{reading.label}</strong> <span className="tag">{authorNamed(an, reading) ? "the post names these" : "AI-inferred"}</span>
           </p>
           {reading.gap_note && <p className="muted small">Beyond the post: {reading.gap_note}</p>}
           {side.model_default && (
