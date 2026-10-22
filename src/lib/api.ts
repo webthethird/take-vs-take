@@ -14,7 +14,15 @@ export type ReportView = Omit<ComparisonReport, "backtests" | "window"> & {
   backtests: Record<"a" | "b" | "benchmark", Pick<BacktestResult, "metrics"> & { chart: ChartPoint[] | null }> | null;
 };
 
-export type PostView = { text: string; author_name: string | null; text_verified: boolean };
+/// What the page shows of a post: sent with the result, never saved. `shown`
+/// lists what the model saw besides the text.
+export type PostView = {
+  text: string;
+  author_name: string | null;
+  text_verified: boolean;
+  context: { kind: "parent" | "quoted"; text: string }[];
+  shown: { images: number; video_previews: number; links: number; unavailable: ("parent" | "quoted")[] };
+};
 
 /// The route streams one JSON object per line (NDJSON): stages as they
 /// start, then exactly one `result` or `error`.

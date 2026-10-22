@@ -9,15 +9,18 @@
 // Guards, because this endpoint spends money:
 //   - same-origin only: a page on another site can't make your browser call it;
 //   - JSON only (a cross-site JSON POST needs a CORS preflight we never grant);
-//   - only posts saved as fixtures resolve, so arbitrary text never reaches
-//     the model;
-//   - one run at a time, so two runs can't both pass the budget check;
+//   - a post resolves from a saved fixture, or by fetching that exact post
+//     from X (only when X_BEARER_TOKEN is set), so no visitor-supplied text
+//     ever reaches the model;
+//   - one run at a time, taken before any X fetch, so two requests can't
+//     both spend or both pass the budget check;
 //   - the LLM budget and Tiingo quota still apply inside compare().
 
 import { z } from "zod";
-import type { CompareEvent } from "../../../lib/api.js";
+import type { CompareEvent, PostView } from "../../../lib/api.js";
+import type { PostInput } from "../../../lib/schema.js";
 import { compare } from "../../../lib/compare.js";
-import { realDeps } from "../../../server/deps.js";
+import { realDeps, xFromEnv } from "../../../server/deps.js";
 import { canonicalOrder, pinnedWindowEnd, resolvePosts } from "../../../server/posts.js";
 import { reportView } from "../../../server/view.js";
 
@@ -42,22 +45,26 @@ export async function POST(req: Request): Promise<Response> {
   const body = Body.safeParse(await req.json().catch(() => null));
   if (!body.success) return json(400, { type: "error", error: "invalid_request", message: "Expected { a, b } post URLs." });
 
-  const posts = await resolvePosts(body.data.a, body.data.b);
-  if (!posts.ok) return json(400, { type: "error", error: posts.error, message: posts.message, side: posts.side });
-  // One order per pair, so swapped links replay the cached comparison.
-  const { posts: [a, b], swapped } = await canonicalOrder(posts.value[0], posts.value[1]);
-  const pin = body.data.latest ? { ok: true as const, value: null } : await pinnedWindowEnd(a.post_id, b.post_id);
-  if (!pin.ok) return json(500, { type: "error", error: "config", message: pin.message });
   if (running) return json(409, { type: "error", error: "busy", message: "A comparison is already running. Try again when it finishes." });
+  running = true;
+  // Released here on any early return; otherwise by the stream when it ends.
+  const fail = (status: number, e: Extract<CompareEvent, { type: "error" }>) => {
+    running = false;
+    return json(status, e);
+  };
 
-  let deps;
+  let a, b, swapped, pin, deps;
   try {
+    const posts = await resolvePosts(body.data.a, body.data.b, ".", xFromEnv());
+    if (!posts.ok) return fail(posts.error === "x_unavailable" ? 502 : 400, { type: "error", error: posts.error, message: posts.message, side: posts.side });
+    // One order per pair, so swapped links replay the cached comparison.
+    ({ posts: [a, b], swapped } = await canonicalOrder(posts.value[0], posts.value[1]));
+    pin = body.data.latest ? { ok: true as const, value: null } : await pinnedWindowEnd(a.post_id, b.post_id);
+    if (!pin.ok) return fail(500, { type: "error", error: "config", message: pin.message });
     deps = realDeps(pin.value ? { end: pin.value } : {});
   } catch (e) {
-    return json(500, { type: "error", error: "config", message: (e as Error).message });
+    return fail(500, { type: "error", error: "config", message: (e as Error).message });
   }
-
-  running = true;
   const enc = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -65,7 +72,18 @@ export async function POST(req: Request): Promise<Response> {
       try {
         const r = await compare({ ...deps.deps, onStage: (stage) => send({ type: "stage", stage }) }, a, b);
         if (r.ok) {
-          const view = (p: typeof a) => ({ text: p.text, author_name: p.author_name ?? null, text_verified: p.provenance.text_verified });
+          const view = (p: PostInput): PostView => ({
+            text: p.text,
+            author_name: p.author_name ?? null,
+            text_verified: p.provenance.text_verified,
+            context: p.context.map((c) => ({ kind: c.kind, text: c.text })),
+            shown: {
+              images: p.media.filter((m) => m.kind === "photo").length,
+              video_previews: p.media.filter((m) => m.kind !== "photo").length,
+              links: p.links.length,
+              unavailable: p.unavailable_context,
+            },
+          });
           send({ type: "result", report: reportView(r.value), posts: { A: view(a), B: view(b) }, pinned_end: pin.value, swapped });
         } else {
           send({ type: "error", error: r.error, message: r.message });

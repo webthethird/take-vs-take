@@ -5,6 +5,8 @@
 import type { CompareDeps } from "../lib/compare.js";
 import { anthropicTransport } from "../lib/llm.js";
 import { tiingoFromEnv } from "../lib/tiingo.js";
+import { XCache, fetchPosts, xClient } from "../lib/x.js";
+import type { FetchFromX } from "./posts.js";
 
 export function realDeps(extra: Partial<CompareDeps> = {}): { deps: CompareDeps; tiingo: ReturnType<typeof tiingoFromEnv>["tiingo"] } {
   const budget = Number(process.env.LLM_BUDGET_USD);
@@ -22,4 +24,13 @@ export function realDeps(extra: Partial<CompareDeps> = {}): { deps: CompareDeps;
       ...extra,
     },
   };
+}
+
+/// Fetching posts from X, if X_BEARER_TOKEN is set; otherwise only saved
+/// fixtures resolve. Responses are cached under .cache/x for 30 days.
+export function xFromEnv(): FetchFromX | undefined {
+  const token = process.env.X_BEARER_TOKEN;
+  if (!token) return undefined;
+  const client = xClient({ token, cache: new XCache(".cache/x"), logPath: ".cache/x-requests.jsonl" });
+  return (ids) => fetchPosts(client, ids);
 }

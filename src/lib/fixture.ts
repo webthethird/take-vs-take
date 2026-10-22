@@ -83,6 +83,9 @@ export function toThesisInput(post: PostInput): ThesisInput {
     created_at: post.created_at,
     context: post.context.map((c) => ({ kind: c.kind, text: c.text })),
     attachments: post.attachments,
+    media: post.media,
+    links: post.links,
+    unavailable_context: post.unavailable_context,
     synthetic: false,
   });
 }

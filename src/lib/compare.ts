@@ -28,7 +28,11 @@ import {
   analyzeThesis,
   draftPortfolio,
   priceTickerCheck,
+  renderPost,
+  showsMedia,
+  withText,
   type Attempt,
+  type Rendered,
 } from "./interpret.js";
 import { structuredCall, type LlmConfig } from "./llm.js";
 import {
@@ -140,13 +144,20 @@ You see the post, an analysis of its claim, the reading that was built, and the 
 
 Then list the parts of the claim the portfolio can only approximate or leave out, and why. Judge against what the post says, not against what would be a sensible investment.`;
 
-function renderForFidelity(post: PostInput, analysis: ThesisAnalysis, p: Portfolio): string {
+/// Shown what the analysis was shown: a post with context or images gets the
+/// same rendering, images included. A text-only post keeps its original,
+/// cached form.
+function renderForFidelity(post: PostInput, analysis: ThesisAnalysis, p: Portfolio): Rendered {
+  const input = toThesisInput(post);
+  const rest = fidelityDetails(analysis, p);
+  if (!showsMedia(input) && input.context.length === 0) return `<post>\n${post.text}\n</post>\n${rest}`;
+  return withText(renderPost(input), rest);
+}
+
+function fidelityDetails(analysis: ThesisAnalysis, p: Portfolio): string {
   const reading = analysis.interpretations.find((i) => i.id === p.interpretation_id);
   const rows = p.positions.map((x) => `${x.ticker}  ${x.weight}%  ${x.role}: ${x.rationale}`);
-  return `<post>
-${post.text}
-</post>
-<analysis>${JSON.stringify({ economic_claim: analysis.economic_claim, direction: analysis.direction, targets: analysis.targets })}</analysis>
+  return `<analysis>${JSON.stringify({ economic_claim: analysis.economic_claim, direction: analysis.direction, targets: analysis.targets })}</analysis>
 <reading>${JSON.stringify(reading ? { label: reading.label, expression: reading.expression, author_stated: authorNamed(analysis, reading), gap_note: reading.gap_note } : null)}</reading>
 <holdings>
 ${rows.join("\n")}
@@ -355,8 +366,9 @@ export async function buildSide(
 
 export function freeze(side: Side, now: Date): FrozenRun {
   const versions = {
-    analyze: ANALYZE_PROMPT_VERSION,
-    // The version actually used: author-named readings have their own.
+    // The versions actually used: posts with images, and author-named
+    // readings, have their own.
+    analyze: side.attempts.find((x) => x.prompt_version.startsWith("analyze"))?.prompt_version ?? ANALYZE_PROMPT_VERSION,
     draft: side.attempts.find((x) => x.prompt_version.startsWith("draft"))?.prompt_version ?? DRAFT_PROMPT_VERSION,
     weights: WEIGHT_RULE_VERSION,
     default_rule: DEFAULT_RULE_VERSION,

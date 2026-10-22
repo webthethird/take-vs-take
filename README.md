@@ -80,8 +80,16 @@ You need a [Tiingo](https://www.tiingo.com) token for prices and an
 `LLM_BUDGET_USD` caps model spend per process; results are cached, so reruns
 replay for free. A new pair has cost well under $1 in model calls so far.
 
-**Posts are not fetched from X yet.** Each post is a hand-written JSON fixture
-in `fixtures/private/` (gitignored, since post text belongs to its author):
+**Posts.** A link resolves to a saved fixture if there is one, otherwise
+it's fetched from the X API when `X_BEARER_TOKEN` is set. A fetch looks up
+only the linked posts and the posts they quote or reply to (one level),
+with their images, video preview frames and link previews; the model sees
+those images, but never opens linked pages, which may have changed since the
+post. API responses are cached under `.cache/x` and deleted after 30 days.
+
+Fixtures are hand-written JSON in `fixtures/private/` (gitignored, since
+post text belongs to its author). The model is told about their
+attachments but not shown them:
 
 ```json
 {

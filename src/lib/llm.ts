@@ -54,9 +54,19 @@ export function costUsd(model: string, u: Usage): number {
 /// Upper bound on one call's cost. Input tokens are over-estimated at one per
 /// two characters (English runs ~4 characters per token; the current tokenizer
 /// uses up to ~1.35x more tokens than older ones).
-export function worstCaseUsd(model: string, inputChars: number, maxTokens: number): number {
+export function worstCaseUsd(model: string, inputChars: number, maxTokens: number, images = 0): number {
   const p = PRICING[model] ?? UNKNOWN_MODEL_PRICING;
-  return (Math.ceil(inputChars / 2) * Math.max(p.input, p.cacheWrite) + maxTokens * p.output) / 1e6;
+  const input = Math.ceil(inputChars / 2) + images * IMAGE_TOKENS_WORST;
+  return (input * Math.max(p.input, p.cacheWrite) + maxTokens * p.output) / 1e6;
+}
+
+/// An image costs tokens by its pixel area after the API downsizes it; its
+/// URL in the request says nothing about that. A generous per-image bound
+/// keeps a call with images from slipping under the budget check.
+export const IMAGE_TOKENS_WORST = 6_000;
+
+function countImages(messages: Anthropic.Beta.BetaMessageParam[]): number {
+  return messages.reduce((n, m) => n + (typeof m.content === "string" ? 0 : m.content.filter((b) => b.type === "image").length), 0);
 }
 
 // ── Transport: the seam tests replace ────────────────────────────────────
@@ -247,7 +257,7 @@ export async function structuredCall<S extends z.ZodType>(
 
   const inputChars = spec.system.length + JSON.stringify(spec.messages).length;
   const spent = await ledgerTotal(cfg.ledgerPath);
-  const worst = worstCaseUsd(model, inputChars, maxTokens);
+  const worst = worstCaseUsd(model, inputChars, maxTokens, countImages(spec.messages));
   if (spent + worst > cfg.budgetUsd) {
     return err(
       "budget_exceeded",

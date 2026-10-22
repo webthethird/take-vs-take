@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import {
+  ANALYZE_MEDIA_PROMPT_VERSION,
+  ANALYZE_MEDIA_SYSTEM,
+  ANALYZE_SYSTEM,
   DRAFT_NAMED_PROMPT_VERSION,
   DRAFT_NAMED_SYSTEM,
   DRAFT_SYSTEM,
@@ -12,6 +15,7 @@ import {
   analyzeThesis,
   draftPortfolio,
   priceTickerCheck,
+  renderPost,
   type TickerCheck,
 } from "../src/lib/interpret.js";
 import type { LlmConfig } from "../src/lib/llm.js";
@@ -291,5 +295,68 @@ describe("analysisProblems: targets", () => {
     const p = analysisProblems({ ...goodAnalysis, targets: [{ ticker: "Microsoft Corp", stance: "negative" }, { ticker: "unp", stance: "positive" }, { ticker: "UNP", stance: "positive" }] }, input);
     assert.match(p.join(), /"Microsoft Corp" is not a ticker/);
     assert.match(p.join(), /UNP is listed twice/);
+  });
+});
+
+describe("posts with images and links", () => {
+  const withMedia = ThesisInput.parse({
+    ...input,
+    context: [{ kind: "quoted", text: "Freight volumes hit a record." }],
+    media: [
+      { from: "post", kind: "photo", url: "https://pbs.twimg.com/media/a.jpg", alt_text: "Chart of rail carloads" },
+      { from: "quoted", kind: "video_preview", url: "https://pbs.twimg.com/thumb/b.jpg", alt_text: null },
+    ],
+    links: [{ from: "post", url: "https://example.com/rail", title: "Rail report", description: null }],
+    unavailable_context: ["parent"],
+  });
+
+  it("renders a text-only post to exactly the string it always has, so cached results stay valid", () => {
+    assert.equal(renderPost(input), `<post_date>2026-07-10 (14:00 UTC)</post_date>\n\n<post>\n${input.text}\n</post>`);
+  });
+
+  it("text-only posts keep the original prompt; posts with media get their own version", async () => {
+    const plain = await cfgWith([goodAnalysis]);
+    await analyzeThesis(plain.cfg, input);
+    assert.equal(plain.t.requests[0]!.system, ANALYZE_SYSTEM);
+    assert.equal(typeof plain.t.requests[0]!.messages[0]!.content, "string");
+
+    const media = await cfgWith([goodAnalysis]);
+    const r = await analyzeThesis(media.cfg, withMedia);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    assert.equal(media.t.requests[0]!.system, ANALYZE_MEDIA_SYSTEM);
+    assert.equal(r.attempts[0]!.prompt_version, ANALYZE_MEDIA_PROMPT_VERSION);
+    assert.notEqual(ANALYZE_MEDIA_SYSTEM, ANALYZE_SYSTEM);
+    assert.match(ANALYZE_MEDIA_SYSTEM, /one preview frame/);
+    assert.doesNotMatch(ANALYZE_MEDIA_SYSTEM, /told that it exists/);
+  });
+
+  it("sends the text first, then each image after a label saying whose it is", () => {
+    const blocks = renderPost(withMedia);
+    assert.ok(Array.isArray(blocks));
+    const [text, ...rest] = blocks;
+    assert.equal(text!.type, "text");
+    const t = (text as { text: string }).text;
+    assert.match(t, /<quoted_post>\nFreight volumes hit a record.\n<\/quoted_post>/);
+    assert.match(t, /<parent_post_unavailable>/);
+    assert.match(t, /<links_not_opened>\n- in the post: https:\/\/example.com\/rail \| title: Rail report\n/);
+    assert.deepEqual(
+      rest.map((b) => (b.type === "image" ? (b.source as { url: string }).url : (b as { text: string }).text)),
+      [
+        '<image n="1">An image attached to the post. Alt text: Chart of rail carloads</image>',
+        "https://pbs.twimg.com/media/a.jpg",
+        '<image n="2">A preview frame of a video (not watched) attached to the quoted post.</image>',
+        "https://pbs.twimg.com/thumb/b.jpg",
+      ],
+    );
+  });
+
+  it("the draft sees the same images, with its instructions in the text before them", async () => {
+    const { cfg, t } = await cfgWith([draft([["UNP", "core"], ["CSX", "core"], ["NSC", "core"], ["CP", "core"]])]);
+    const r = await draftPortfolio(cfg, withMedia, goodAnalysis, "i1", allValid);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    const content = t.requests[0]!.messages[0]!.content;
+    assert.ok(Array.isArray(content));
+    assert.match((content[0] as { text: string }).text, /<interpretation_to_build>/);
+    assert.equal(content.filter((b) => b.type === "image").length, 2);
   });
 });

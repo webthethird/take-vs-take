@@ -17,6 +17,26 @@ export const PostContext = z.object({
 });
 export type PostContext = z.infer<typeof PostContext>;
 
+/// An image the model is shown. A video or GIF is represented by its
+/// preview frame only, and labeled so.
+export const PostMedia = z.object({
+  from: z.enum(["post", "parent", "quoted"]),
+  kind: z.enum(["photo", "video_preview", "gif_preview"]),
+  url: z.url(),
+  alt_text: z.string().nullable(),
+});
+export type PostMedia = z.infer<typeof PostMedia>;
+
+/// A link in a post, with X's preview metadata when it has any. The linked
+/// page itself is never fetched (it may have changed since the post).
+export const PostLink = z.object({
+  from: z.enum(["post", "parent", "quoted"]),
+  url: z.string(),
+  title: z.string().nullable(),
+  description: z.string().nullable(),
+});
+export type PostLink = z.infer<typeof PostLink>;
+
 export const PostInput = z.object({
   post_id: z.string().regex(/^[0-9]+$/),
   url: z.url(),
@@ -26,8 +46,14 @@ export const PostInput = z.object({
   /// Always derived from the snowflake ID, never from user input.
   created_at: z.iso.datetime(),
   context: z.array(PostContext).default([]),
-  /// Media or links in the post that the text doesn't capture.
+  /// Media or links in the post that the model is NOT shown (fixtures).
   attachments: z.array(z.enum(["image", "video", "link"])).default([]),
+  /// Shown to the model (posts fetched from X).
+  media: z.array(PostMedia).default([]),
+  links: z.array(PostLink).default([]),
+  /// A post this one quotes or replies to that couldn't be retrieved
+  /// (deleted, private or withheld).
+  unavailable_context: z.array(z.enum(["parent", "quoted"])).default([]),
   provenance: z.object({
     source: PostSource,
     /// True only when the full text came from an authoritative fetch. A
@@ -108,6 +134,10 @@ export const ThesisInput = z.object({
   context: z.array(z.object({ kind: z.enum(["parent", "quoted"]), text: z.string() })).default([]),
   /// Media or links the post includes but the model can't see.
   attachments: z.array(z.enum(["image", "video", "link"])).default([]),
+  /// Images and links the model is shown, and context it was denied.
+  media: z.array(PostMedia).default([]),
+  links: z.array(PostLink).default([]),
+  unavailable_context: z.array(z.enum(["parent", "quoted"])).default([]),
   /// True for hand-written development posts, never shown as real.
   synthetic: z.boolean().default(false),
 });

@@ -3,7 +3,9 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { canonicalOrder, listDemoPairs, pinnedWindowEnd } from "../src/server/posts.js";
+import { canonicalOrder, listDemoPairs, pinnedWindowEnd, resolvePosts, type FetchFromX } from "../src/server/posts.js";
+import { err } from "../src/lib/result.js";
+import type { PostInput } from "../src/lib/schema.js";
 
 const A = "2077459480963616779";
 const B = "2099566262431203737";
@@ -82,5 +84,43 @@ describe("canonicalOrder", () => {
     assert.deepEqual(await canonicalOrder(post(C), post(A), d), { posts: [post(A), post(C)], swapped: true });
     // As strings "999" > "1000"; as IDs it's earlier.
     assert.deepEqual(ids(await canonicalOrder(post("1000"), post("999"), d)), ["999", "1000"]);
+  });
+});
+
+describe("resolvePosts", () => {
+  const fixture = (id: string) => ({ url: `https://x.com/saved/status/${id}`, author_handle: "saved", text: "Saved text.", retrieved_at: "2026-10-19T00:00:00Z" });
+  const fetched = (id: string) =>
+    ({ post_id: id, url: `https://x.com/live/status/${id}`, author_handle: "live", text: "Fetched text.", created_at: "2026-09-01T00:00:00.000Z", context: [], attachments: [], media: [], links: [], unavailable_context: [], provenance: { source: "x_api", text_verified: true, retrieved_at: "2026-10-22T00:00:00.000Z" } }) as PostInput;
+
+  it("uses a saved fixture when there is one and fetches only the other post", async () => {
+    const d = await root([]);
+    await writeFile(join(d, "fixtures/private/one.json"), JSON.stringify(fixture(A)));
+    const asked: string[][] = [];
+    const fetchFromX: FetchFromX = async (ids) => {
+      asked.push(ids);
+      return { ok: true, value: ids.map(fetched) };
+    };
+    const r = await resolvePosts(`https://x.com/u/status/${A}`, `https://x.com/u/status/${B}`, d, fetchFromX);
+    assert.ok(r.ok);
+    assert.deepEqual(asked, [[B]]);
+    if (r.ok) assert.deepEqual(r.value.map((p) => p.provenance.source), ["fixture_manual", "x_api"]);
+  });
+
+  it("without X fetching, a post that isn't saved is unavailable", async () => {
+    const r = await resolvePosts(`https://x.com/u/status/${A}`, `https://x.com/u/status/${B}`, await root([]));
+    assert.equal(!r.ok && r.error, "not_available");
+    if (!r.ok) assert.equal(r.side, "both");
+  });
+
+  it("points an X failure at the side it belongs to", async () => {
+    const d = await root([]);
+    const fetchFromX: FetchFromX = async () => ({ ...err("not_found", "deleted"), index: 1 });
+    const r = await resolvePosts(`https://x.com/u/status/${A}`, `https://x.com/u/status/${B}`, d, fetchFromX);
+    assert.equal(!r.ok && r.error, "not_found");
+    if (!r.ok) assert.equal(r.side, "b");
+    const down: FetchFromX = async () => err("network", "unreachable");
+    const r2 = await resolvePosts(`https://x.com/u/status/${A}`, `https://x.com/u/status/${B}`, d, down);
+    assert.equal(!r2.ok && r2.error, "x_unavailable");
+    if (!r2.ok) assert.equal(r2.side, "both");
   });
 });

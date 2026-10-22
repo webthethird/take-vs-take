@@ -74,7 +74,7 @@ describe("toThesisInput", () => {
     assert.ok(r.ok);
     if (!r.ok) return;
     const t = toThesisInput(r.value);
-    assert.deepEqual(Object.keys(t).sort(), ["attachments", "context", "created_at", "synthetic", "text"]);
+    assert.deepEqual(Object.keys(t).sort(), ["attachments", "context", "created_at", "links", "media", "synthetic", "text", "unavailable_context"]);
     assert.deepEqual(t.attachments, ["image", "link"]);
     assert.doesNotMatch(JSON.stringify(t), /example_user|Example_User|x\.com/);
   });

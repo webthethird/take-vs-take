@@ -365,6 +365,21 @@ function FidelityLine({ f }: { f: FidelityResult | null }) {
   );
 }
 
+/// "The model also saw 2 images and a video's preview frame; 1 link was not opened."
+function shownNote(s: PostView["shown"]): string | null {
+  const n = (k: number, one: string, many: string) => (k === 1 ? one : `${k} ${many}`);
+  const saw = [
+    s.images > 0 && n(s.images, "an image", "images"),
+    s.video_previews > 0 && n(s.video_previews, "a video's preview frame (not the video)", "videos' preview frames (not the videos)"),
+  ].filter(Boolean);
+  const parts = [
+    saw.length > 0 && `The model also saw ${saw.join(" and ")}.`,
+    s.links > 0 && `${n(s.links, "A link", "links")} in the post ${s.links === 1 ? "was" : "were"} not opened.`,
+    ...s.unavailable.map((k) => `The post it ${k === "parent" ? "replies to" : "quotes"} couldn't be retrieved.`),
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
 function SideCard({ side, post, color, ret, fidelity }: { side: FrozenRun; post: PostView; color: string; ret?: number; fidelity: FidelityResult | null }) {
   const an = side.analysis;
   const reading = an.interpretations.find((i) => i.id === an.default_interpretation);
@@ -378,8 +393,14 @@ function SideCard({ side, post, color, ret, fidelity }: { side: FrozenRun; post:
         </a>
         <span className="muted"> · {side.post.created_at.slice(0, 10)}</span>
       </header>
+      {post.context.map((c) => (
+        <blockquote key={c.kind} className="context">
+          <span className="muted small">{c.kind === "quoted" ? "Quoting" : "Replying to"}:</span> {c.text}
+        </blockquote>
+      ))}
       <blockquote>{post.text}</blockquote>
       {!post.text_verified && <p className="muted small">Saved copy of the post, not fetched from X.</p>}
+      {shownNote(post.shown) && <p className="muted small">{shownNote(post.shown)}</p>}
       {side.post.attachments.length > 0 && <p className="muted small">The post includes {side.post.attachments.join(" and ")} the model could not see.</p>}
 
       <h3>What the post claims</h3>

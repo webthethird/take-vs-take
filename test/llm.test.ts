@@ -129,6 +129,18 @@ describe("structuredCall", () => {
     assert.equal(t.requests.length, 0);
   });
 
+  it("counts images in the worst case: a URL is short, the image isn't", async () => {
+    const image = { type: "image" as const, source: { type: "url" as const, url: "https://pbs.twimg.com/media/a.jpg" } };
+    const withImages = { ...spec, messages: [{ role: "user" as const, content: [{ type: "text" as const, text: "hi" }, image, image, image, image] }] };
+    // Text only: ~$0.02 worst case, under $0.05. Four images add 24,000 tokens at $5/MTok.
+    const ok = await structuredCall(await config(scripted([{ parsed: { answer: "yes" } }]), 0.05), spec);
+    assert.ok(ok.ok);
+    const t = scripted([{ parsed: { answer: "yes" } }]);
+    const r = await structuredCall(await config(t, 0.05), withImages);
+    assert.equal(!r.ok && r.error, "budget_exceeded");
+    assert.equal(t.requests.length, 0);
+  });
+
   it("the budget is cumulative across processes via the ledger", async () => {
     const t = scripted([{ parsed: { answer: "yes" } }]);
     const cfg = await config(t, 5);

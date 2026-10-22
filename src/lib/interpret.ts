@@ -25,6 +25,9 @@ import { structuredCall, type CallResult, type LlmConfig, type LlmError } from "
 import type { z } from "zod";
 
 export const ANALYZE_PROMPT_VERSION = "analyze-v2";
+/// For posts fetched from X, whose images and links the model is shown.
+/// Posts without any keep ANALYZE_PROMPT_VERSION and its cached results.
+export const ANALYZE_MEDIA_PROMPT_VERSION = "analyze-media-v1";
 export const DRAFT_PROMPT_VERSION = "draft-v1";
 /// Author-named readings: the same prompt plus the "named" style. A separate
 /// version, so inferred readings keep their exact prompt and cached drafts.
@@ -65,6 +68,14 @@ Give 1 to 3 genuinely different readings. Portfolios can only buy, so:
 - If no long position could faithfully express the claim, say so in the status_reason and use not_investable rather than inventing one.
 
 Choose as default the broadest reading that still covers the post's main claim, unless the post clearly means one specific reading.`;
+
+const TEXT_ONLY_SEEN = `You see only the post's text, its date, and sometimes the post it replies to or quotes. You are deliberately not told who wrote it. If the post includes an image, video or link, you are told that it exists but not what it shows; interpret the text alone and say so in "missing" when the attachment probably matters.`;
+
+/// ANALYZE_SYSTEM with one paragraph replaced: what the model is shown.
+export const ANALYZE_MEDIA_SYSTEM = ANALYZE_SYSTEM.replace(
+  TEXT_ONLY_SEEN,
+  `You see the post's text and date, the post it replies to or quotes when there is one, and the images attached to any of them. You are deliberately not told who wrote it. A video or GIF is shown only as one preview frame; nobody has watched it. For a link you see only its address and sometimes a title and description, not the page. Use what the images show, such as a chart or a screenshot of text, but quote evidence only from the written text. Say in "missing" when something you couldn't see (a video, a linked page, a post that couldn't be retrieved) probably matters.`,
+);
 
 function draftSystem(): string {
   const styles = Object.entries(STYLE)
@@ -123,15 +134,51 @@ Hold the named securities as core. A portfolio needs at least ${NAMED.min} posit
 
 Never add something the post argues against, dismisses or treats as competition. Don't add a fund whose main exposure is unrelated to the post just because it happens to hold the named stock.`;
 
-function renderPost(input: ThesisInput): string {
+/// Whether the model is shown more than text: decides the prompt version.
+export function showsMedia(input: Pick<ThesisInput, "media" | "links" | "unavailable_context">): boolean {
+  return input.media.length > 0 || input.links.length > 0 || input.unavailable_context.length > 0;
+}
+
+export type Rendered = string | Anthropic.Beta.BetaContentBlockParam[];
+
+/// A text-only post renders to exactly the string it always has, so cached
+/// results stay valid. A post with images renders to content blocks: the
+/// text, then each image after a label saying whose it is.
+export function renderPost(input: ThesisInput): Rendered {
   const d = new Date(input.created_at);
   const parts = [`<post_date>${etDate(d)} (${d.toISOString().slice(11, 16)} UTC)</post_date>`];
   for (const c of input.context) parts.push(`<${c.kind}_post>\n${c.text}\n</${c.kind}_post>`);
+  for (const k of input.unavailable_context) {
+    parts.push(`<${k}_post_unavailable>This post ${k === "parent" ? "replies to" : "quotes"} a post that couldn't be retrieved (deleted, private or withheld).</${k}_post_unavailable>`);
+  }
   parts.push(`<post>\n${input.text}\n</post>`);
   if (input.attachments.length > 0) {
     parts.push(`<attachments_not_shown>${input.attachments.join(", ")}</attachments_not_shown>`);
   }
-  return parts.join("\n\n");
+  if (input.links.length > 0) {
+    const rows = input.links.map((l) => `- in the ${whose(l.from)}: ${l.url}${l.title ? ` | title: ${l.title}` : ""}${l.description ? ` | description: ${l.description}` : ""}`);
+    parts.push(`<links_not_opened>\n${rows.join("\n")}\n</links_not_opened>`);
+  }
+  const text = parts.join("\n\n");
+  if (input.media.length === 0) return text;
+  const blocks: Anthropic.Beta.BetaContentBlockParam[] = [{ type: "text", text }];
+  input.media.forEach((m, i) => {
+    const what = m.kind === "photo" ? "An image" : `A preview frame of a ${m.kind === "video_preview" ? "video" : "GIF"} (not watched)`;
+    blocks.push({ type: "text", text: `<image n="${i + 1}">${what} attached to the ${whose(m.from)}.${m.alt_text ? ` Alt text: ${m.alt_text}` : ""}</image>` });
+    blocks.push({ type: "image", source: { type: "url", url: m.url } });
+  });
+  return blocks;
+}
+
+function whose(from: "post" | "parent" | "quoted"): string {
+  return from === "post" ? "post" : from === "parent" ? "post it replies to" : "quoted post";
+}
+
+/// Append text to a rendered post, keeping images after all the text.
+export function withText(r: Rendered, ...more: string[]): Rendered {
+  if (typeof r === "string") return [r, ...more].join("\n\n");
+  const [first, ...rest] = r;
+  return [{ type: "text", text: [(first as { text: string }).text, ...more].join("\n\n") }, ...rest];
 }
 
 // ── Repair loop ──────────────────────────────────────────────────────────
@@ -147,7 +194,7 @@ type RepairError = LlmError | "invalid_after_repair";
 async function callWithRepair<S extends z.ZodType>(
   cfg: LlmConfig,
   base: { promptVersion: string; system: string; schema: S; nonce?: string },
-  firstUser: string,
+  firstUser: Rendered,
   validate: (v: z.infer<S>) => Promise<string[]>,
 ): Promise<Result<RepairOutcome<z.infer<S>>, RepairError> & { attempts: Attempt[] }> {
   const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content: firstUser }];
@@ -221,7 +268,9 @@ export async function analyzeThesis(
 ): Promise<Result<AnalysisRun, RepairError> & { attempts: Attempt[] }> {
   const r = await callWithRepair(
     cfg,
-    { promptVersion: ANALYZE_PROMPT_VERSION, system: ANALYZE_SYSTEM, schema: ThesisAnalysis, nonce: opts.nonce },
+    showsMedia(input)
+      ? { promptVersion: ANALYZE_MEDIA_PROMPT_VERSION, system: ANALYZE_MEDIA_SYSTEM, schema: ThesisAnalysis, nonce: opts.nonce }
+      : { promptVersion: ANALYZE_PROMPT_VERSION, system: ANALYZE_SYSTEM, schema: ThesisAnalysis, nonce: opts.nonce },
     renderPost(input),
     async (a) => analysisProblems(a, input),
   );
@@ -287,11 +336,11 @@ export async function draftPortfolio(
   }
 
   const named = authorNamed(analysis, interp);
-  const user = [
+  const user = withText(
     renderPost(input),
     `<analysis>\n${JSON.stringify({ economic_claim: analysis.economic_claim, direction: analysis.direction, subjects: analysis.subjects, horizon: analysis.horizon, missing: analysis.missing }, null, 2)}\n</analysis>`,
     `<interpretation_to_build>\n${JSON.stringify(interp, null, 2)}\n</interpretation_to_build>`,
-  ].join("\n\n");
+  );
 
   let weighted: Portfolio | null = null;
   let unavailable: string | null = null;

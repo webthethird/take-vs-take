@@ -9,6 +9,7 @@ import { parsePostUrl, parsePostUrlPair } from "../lib/post-url.js";
 import { etDate } from "../lib/prices.js";
 import { err, type Result } from "../lib/result.js";
 import type { PostInput } from "../lib/schema.js";
+import type { XError } from "../lib/x.js";
 
 export const FIXTURE_DIR = "fixtures/private";
 export const CANDIDATES = "fixtures/candidates.md";
@@ -107,9 +108,19 @@ export async function pinnedWindowEnd(postIdA: string, postIdB: string, root = "
   return { ok: true, value: d };
 }
 
-export type ResolveError = "invalid_url" | "same_post" | "not_available";
+export type ResolveError = "invalid_url" | "same_post" | "not_available" | "not_found" | "not_authorized" | "unsupported" | "x_unavailable";
 
-export async function resolvePosts(a: string, b: string, root = "."): Promise<Result<[PostInput, PostInput], ResolveError> & { side?: "a" | "b" | "both" }> {
+/// Fetches posts from X by ID, in the order asked (src/lib/x.ts fetchPosts).
+export type FetchFromX = (ids: string[]) => Promise<Result<PostInput[], XError> & { index?: number }>;
+
+/// A saved fixture wins (free, and its results are pinned); any other post
+/// is fetched from X when fetching is enabled.
+export async function resolvePosts(
+  a: string,
+  b: string,
+  root = ".",
+  fetchFromX?: FetchFromX,
+): Promise<Result<[PostInput, PostInput], ResolveError> & { side?: "a" | "b" | "both" }> {
   const pair = parsePostUrlPair(a, b);
   if (!pair.ok) return { ...err(pair.error === "same_post" ? "same_post" : "invalid_url", pair.message), side: pair.side };
 
@@ -123,13 +134,20 @@ export async function resolvePosts(a: string, b: string, root = "."): Promise<Re
       // An unreadable fixture just isn't available.
     }
   }
-  const posts: PostInput[] = [];
-  for (const [i, p] of pair.value.entries()) {
-    const found = byId.get(p.postId);
-    if (!found) {
-      return { ...err("not_available", "This post isn't saved locally, and fetching from X isn't enabled yet. Use one of the example pairs."), side: i === 0 ? "a" : "b" };
+  const side = (i: number) => (i === 0 ? "a" : "b") as "a" | "b";
+  const missing = pair.value.map((p, i) => ({ id: p.postId, i })).filter((m) => !byId.has(m.id));
+  if (missing.length > 0) {
+    if (!fetchFromX) {
+      return { ...err("not_available", "This post isn't saved locally, and fetching from X isn't enabled. Use one of the example pairs."), side: missing.length === 2 ? "both" : side(missing[0]!.i) };
     }
-    posts.push(found);
+    const r = await fetchFromX(missing.map((m) => m.id));
+    if (!r.ok) {
+      const code: ResolveError = r.error === "not_found" || r.error === "not_authorized" || r.error === "unsupported" ? r.error : "x_unavailable";
+      const where = r.index !== undefined ? side(missing[r.index]!.i) : missing.length === 2 ? "both" : side(missing[0]!.i);
+      return { ...err(code, r.message), side: where };
+    }
+    r.value.forEach((p, k) => byId.set(missing[k]!.id, p));
   }
+  const posts = pair.value.map((p) => byId.get(p.postId)!);
   return { ok: true, value: [posts[0]!, posts[1]!] };
 }
