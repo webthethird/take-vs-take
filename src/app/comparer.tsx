@@ -272,7 +272,10 @@ function Summary({ report }: { report: ReportView }) {
       )}
       {report.drivers && (
         <p className="drivers-summary">
-          <span className="tag">AI reading of the holdings</span> {report.drivers.value.summary}
+          <span className="tag">
+            AI reading of the holdings{report.drivers.expectations.length > 1 ? ` (1 of ${report.drivers.expectations.length})` : ""}
+          </span>{" "}
+          {report.drivers.value.summary}
         </p>
       )}
       <dl className="headline">
@@ -522,14 +525,20 @@ function Comparison({ report }: { report: ReportView }) {
           )}
         </div>
       </div>
-      {report.drivers && <Drivers d={report.drivers.value} />}
+      {report.drivers && <Drivers d={report.drivers.value} expectations={report.drivers.expectations} />}
     </section>
   );
 }
 
 const EXPECT = { together: "line up", apart: "move in opposite directions", no_clear_relationship: "show no clear relationship" } as const;
 
-function Drivers({ d }: { d: SharedDrivers }) {
+function Drivers({ d, expectations }: { d: SharedDrivers; expectations: SharedDrivers["expected_daily_co_movement"][] }) {
+  const n = expectations.length;
+  const split = (Object.keys(EXPECT) as (keyof typeof EXPECT)[])
+    .map((e) => [e, expectations.filter((x) => x === e).length] as const)
+    .filter(([, c]) => c > 0)
+    .map(([e, c]) => `${c} expected their daily moves to ${EXPECT[e]}`)
+    .join(", ");
   return (
     <div className="fact drivers">
       <h3>What are they exposed to?</h3>
@@ -575,8 +584,11 @@ function Drivers({ d }: { d: SharedDrivers }) {
         </table>
       )}
       <p className="muted small">
-        The model&apos;s reading of the two portfolios ({d.confidence} confidence), made after both were frozen and before any prices were loaded. It
-        expected their daily moves to {EXPECT[d.expected_daily_co_movement]}; compare that with the measured result above. An interpretation, not data.
+        The model&apos;s reading of the two portfolios ({d.confidence} confidence), made after both were frozen and before any prices were loaded.{" "}
+        {n > 1
+          ? `It was asked ${n} times with the identical prompt: ${split}. Shown: the first reading with the most common answer.`
+          : `It expected their daily moves to ${EXPECT[d.expected_daily_co_movement]}.`}{" "}
+        Compare that with the measured result above. An interpretation, not data.
       </p>
     </div>
   );

@@ -52,6 +52,9 @@ export const BENCHMARK = "SPY";
 export const MODEL_TRAINING_CUTOFF = "2026-06-30";
 export const ALIGN_PROMPT_VERSION = "align-v1";
 export const DRIVERS_PROMPT_VERSION = "drivers-v1";
+/// One reading's prediction proved unstable (the same holdings, reworded,
+/// flipped it), so the step samples several and reports how they split.
+export const DRIVERS_SAMPLES = 3;
 export const FIDELITY_PROMPT_VERSION = "fidelity-v1";
 export const DEFAULT_RULE_VERSION = "default-v1";
 
@@ -243,8 +246,11 @@ export type ComparisonReport = {
   versions: Record<string, string>;
   sides: FrozenRun[];
   alignment: { value: ThesisAlignment; cost_usd: number; cached: boolean } | null;
-  /// What the holdings share economically, read before any prices.
-  drivers: { value: SharedDrivers; cost_usd: number; cached: boolean } | null;
+  /// What the holdings share economically, read before any prices. `value`
+  /// is the first sample whose expectation is the most common one, so the
+  /// text shown never contradicts the counts; `expectations` has every
+  /// successful sample's, in order.
+  drivers: { value: SharedDrivers; expectations: CoMovement[]; shown: number; cost_usd: number; cached: boolean } | null;
   /// How each side's holdings relate to its post; null for a side without a
   /// portfolio or whose labels were unavailable.
   fidelity: { A: FidelityResult | null; B: FidelityResult | null };
@@ -281,6 +287,8 @@ export type CompareDeps = {
   /// terms allow storing results derived from prices (Tiingo Starter
   /// doesn't).
   persistReport?: boolean;
+  /// Shared-drivers samples; defaults to DRIVERS_SAMPLES.
+  driversSamples?: number;
   /// Also draft every non-default reading, for sensitivity analysis.
   /// Off by default: it multiplies cost, and it's a diagnostic, not the
   /// headline.
@@ -398,14 +406,32 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
   let driversError: string | null = null;
   if (fa.portfolio && fb.portfolio) {
     deps.onStage?.({ stage: "drivers" });
-    const dr = await structuredCall(deps.llm, {
-      promptVersion: DRIVERS_PROMPT_VERSION,
-      system: DRIVERS_SYSTEM,
-      schema: SharedDrivers,
-      messages: [{ role: "user", content: `${renderForDrivers("A", fa.analysis, fa.portfolio)}\n\n${renderForDrivers("B", fb.analysis, fb.portfolio)}` }],
-    });
-    if (dr.ok) drivers = { value: dr.value.value, cost_usd: dr.value.meta.cost_usd, cached: dr.value.meta.cached };
-    else driversError = dr.message;
+    const content = `${renderForDrivers("A", fa.analysis, fa.portfolio)}\n\n${renderForDrivers("B", fb.analysis, fb.portfolio)}`;
+    const ok: { value: SharedDrivers; cached: boolean }[] = [];
+    const failures: string[] = [];
+    let cost = 0;
+    for (let k = 0; k < (deps.driversSamples ?? DRIVERS_SAMPLES); k++) {
+      // Sample 0 has no nonce, so it replays the single-sample cache.
+      const dr = await structuredCall(deps.llm, {
+        promptVersion: DRIVERS_PROMPT_VERSION,
+        system: DRIVERS_SYSTEM,
+        schema: SharedDrivers,
+        messages: [{ role: "user", content }],
+        ...(k > 0 ? { nonce: `drivers-${k}` } : {}),
+      });
+      if (dr.ok) {
+        cost += dr.value.meta.cost_usd;
+        ok.push({ value: dr.value.value, cached: dr.value.meta.cached });
+      } else failures.push(dr.message);
+    }
+    if (ok.length > 0) {
+      const expectations = ok.map((x) => x.value.expected_daily_co_movement);
+      const count = (e: CoMovement) => expectations.filter((x) => x === e).length;
+      const top = Math.max(...expectations.map(count));
+      const shown = expectations.findIndex((e) => count(e) === top);
+      drivers = { value: ok[shown]!.value, expectations, shown, cost_usd: cost, cached: ok.every((x) => x.cached) };
+    }
+    if (failures.length > 0) driversError = `${failures.length} of ${failures.length + ok.length} samples failed (${failures[0]})`;
   }
 
   // Fidelity: per side, same timing, never shown the other side.
@@ -450,7 +476,7 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
     llm_cost_usd,
   };
   if (!al.ok) caveats.push(`Thesis alignment unavailable: ${al.message}`);
-  if (driversError) caveats.push(`Shared-drivers reading unavailable: ${driversError}`);
+  if (driversError) caveats.push(`Shared-drivers reading: ${driversError}.`);
   caveats.push(...fidelityErrors);
 
   const abstained = frozen.filter((f) => f.portfolio === null);
@@ -609,15 +635,22 @@ export function findings(r: ComparisonReport): Finding[] {
   if (agreeing && dir === "apart") {
     out.push({ kind: "mismatch", text: "The opinions are compatible, but the portfolios built from them have historically tended to move apart." });
   }
-  const expected = r.drivers?.value.expected_daily_co_movement;
-  if (expected && dir) {
-    const will = { together: "line up", apart: "move in opposite directions", no_clear_relationship: "show no clear relationship" }[expected];
+  const expectations = r.drivers?.expectations ?? [];
+  if (expectations.length > 0 && dir) {
+    const will = { together: "line up", apart: "move in opposite directions", no_clear_relationship: "show no clear relationship" };
     const did = { together: "lined up", apart: "moved in opposite directions", no_clear_relationship: "showed no clear relationship" }[dir];
-    out.push(
-      expected === dir
-        ? { kind: "drivers_expected", text: `Reading only the holdings, before any prices were loaded, the AI expected their daily moves to ${will}; in the year before the posts, they did.` }
-        : { kind: "drivers_unexpected", text: `Reading only the holdings, before any prices were loaded, the AI expected their daily moves to ${will}, but in the year before the posts they ${did}.` },
-    );
+    const n = expectations.length;
+    const hits = expectations.filter((e) => e === dir).length;
+    const split = (["together", "no_clear_relationship", "apart"] as const)
+      .map((e) => [e, expectations.filter((x) => x === e).length] as const)
+      .filter(([, c]) => c > 0)
+      .map(([e, c]) => `${c} expected their daily moves to ${will[e]}`)
+      .join(", ");
+    const asked = `Reading only the holdings, before any prices were loaded, ${n === 1 ? "one AI reading" : `${n} separate AI readings`}`;
+    out.push({
+      kind: hits === n ? "drivers_expected" : hits === 0 ? "drivers_unexpected" : "drivers_mixed",
+      text: n === 1 ? `${asked} expected their daily moves to ${will[expectations[0]!]}; in the year before the posts, they ${did}.` : `${asked}: ${split}. In the year before the posts, they ${did}.`,
+    });
   }
   if (opposed && r.holdings_overlap && r.holdings_overlap.shared.length > 0) {
     out.push({ kind: "shared_holdings", text: `The opinions conflict, yet both portfolios hold ${r.holdings_overlap.shared.map((s) => s.ticker).join(", ")}.` });

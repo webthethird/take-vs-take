@@ -107,7 +107,7 @@ async function setup(responses: (Partial<ModelResponse> | Error)[]) {
       return base.daily(ticker, start, end);
     },
   };
-  return { t, reads, deps: { llm, prices, outDir: out, end: "2026-10-16", now: () => new Date("2026-10-19T12:00:00Z") } };
+  return { t, reads, deps: { llm, prices, outDir: out, end: "2026-10-16", now: () => new Date("2026-10-19T12:00:00Z"), driversSamples: 1 } };
 }
 const ok = (parsed: unknown) => ({ parsed });
 

@@ -112,7 +112,8 @@ async function setup(responses: unknown[], source?: PriceSource) {
       return base.daily(ticker, start, end);
     },
   };
-  return { t, reads, deps: { llm, prices, outDir: join(d, "out"), end: "2026-10-16", now: () => new Date("2026-10-19T12:00:00Z") } };
+  // One drivers sample keeps the scripted response lists short; sampling has its own tests.
+  return { t, reads, deps: { llm, prices, outDir: join(d, "out"), end: "2026-10-16", now: () => new Date("2026-10-19T12:00:00Z"), driversSamples: 1 } };
 }
 
 const happy = [
@@ -230,6 +231,29 @@ describe("compare", () => {
     assert.ok(r.value.findings.some((f) => f.kind === "drivers_expected" || f.kind === "drivers_unexpected"));
   });
 
+  it("samples the drivers reading several times with identical prompts, showing a majority sample", async () => {
+    const say = (e: SharedDrivers["expected_daily_co_movement"]) => ({ ...drivers, expected_daily_co_movement: e, summary: e });
+    const { deps, t } = await setup([...happy.slice(0, -3), say("no_clear_relationship"), say("together"), say("together"), fidA, fidB]);
+    const r = await compare({ ...deps, driversSamples: 3 }, postA, postB);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    if (!r.ok) return;
+    const calls = t.requests.filter((q) => q.system === DRIVERS_SYSTEM);
+    assert.equal(calls.length, 3);
+    assert.ok(calls.every((q) => JSON.stringify(q.messages) === JSON.stringify(calls[0]!.messages)));
+    assert.deepEqual(r.value.drivers!.expectations, ["no_clear_relationship", "together", "together"]);
+    assert.equal(r.value.drivers!.shown, 1);
+    assert.equal(r.value.drivers!.value.summary, "together");
+  });
+
+  it("keeps the samples that succeed and notes the ones that don't", async () => {
+    const { deps } = await setup([...happy.slice(0, -3), drivers, { unexpected: true }, drivers, fidA, fidB]);
+    const r = await compare({ ...deps, driversSamples: 3 }, postA, postB);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    if (!r.ok) return;
+    assert.deepEqual(r.value.drivers!.expectations, ["together", "together"]);
+    assert.ok(r.value.caveats.some((c) => /Shared-drivers reading: 1 of 3 samples failed/.test(c)));
+  });
+
   it("carries on with a caveat when the drivers call fails", async () => {
     // An output that doesn't match the schema, standing in for any model failure.
     const { deps } = await setup([...happy.slice(0, -3), { unexpected: true }, fidA, fidB]);
@@ -238,7 +262,7 @@ describe("compare", () => {
     if (!r.ok) return;
     assert.equal(r.value.drivers, null);
     assert.ok(r.value.backtests);
-    assert.ok(r.value.caveats.some((c) => /Shared-drivers reading unavailable/.test(c)));
+    assert.ok(r.value.caveats.some((c) => /Shared-drivers reading: 1 of 1 samples failed/.test(c)));
   });
 
   it("an abstaining side stops before any outcome is read", async () => {
@@ -289,13 +313,18 @@ describe("findings", () => {
     assert.ok(f.some((x) => x.kind === "market_explains" && /betas 1\.10 and -0\.60/.test(x.text)));
   });
 
-  it("sets the drivers reading's expectation beside the measured direction", () => {
-    const withDrivers = (e: SharedDrivers["expected_daily_co_movement"]) => ({ drivers: { value: { ...drivers, expected_daily_co_movement: e }, cost_usd: 0, cached: true } });
-    const hit = findings(base({ ...withDrivers("together"), co_movement: cm([0.2, 0.4], [0.1, 0.3]) }));
-    assert.ok(hit.some((x) => x.kind === "drivers_expected" && /expected their daily moves to line up; in the year before the posts, they did/.test(x.text)));
-    const miss = findings(base({ ...withDrivers("together"), co_movement: cm([-0.05, 0.1], [-0.05, 0.1]) }));
-    assert.ok(miss.some((x) => x.kind === "drivers_unexpected" && /line up, but .* showed no clear relationship/.test(x.text)));
-    assert.ok(!findings(base({ co_movement: cm([0.2, 0.4], [0.1, 0.3]) })).some((x) => x.kind.startsWith("drivers")));
+  it("sets how the drivers readings split beside the measured direction", () => {
+    const withDrivers = (...e: SharedDrivers["expected_daily_co_movement"][]) => ({ drivers: { value: drivers, expectations: e, shown: 0, cost_usd: 0, cached: true } });
+    const together = cm([0.2, 0.4], [0.1, 0.3]);
+    const one = findings(base({ ...withDrivers("together"), co_movement: together }));
+    assert.ok(one.some((x) => x.kind === "drivers_expected" && /one AI reading expected their daily moves to line up; in the year before the posts, they lined up/.test(x.text)));
+    const all = findings(base({ ...withDrivers("together", "together", "together"), co_movement: together }));
+    assert.ok(all.some((x) => x.kind === "drivers_expected" && /3 separate AI readings: 3 expected their daily moves to line up\. In the year before the posts, they lined up\./.test(x.text)));
+    const mixed = findings(base({ ...withDrivers("no_clear_relationship", "together", "together"), co_movement: together }));
+    assert.ok(mixed.some((x) => x.kind === "drivers_mixed" && /2 expected their daily moves to line up, 1 expected their daily moves to show no clear relationship/.test(x.text)));
+    const none = findings(base({ ...withDrivers("together", "together"), co_movement: cm([-0.05, 0.1], [-0.05, 0.1]) }));
+    assert.ok(none.some((x) => x.kind === "drivers_unexpected" && /they showed no clear relationship/.test(x.text)));
+    assert.ok(!findings(base({ co_movement: together })).some((x) => x.kind.startsWith("drivers")));
   });
 
   it("names shared holdings between opposing opinions", () => {
