@@ -21,6 +21,7 @@ export type PostView = { text: string; author_name: string | null; text_verified
 export type CompareEvent =
   | { type: "stage"; stage: Stage }
   /// pinned_end: the fixed end date this example ran through, or null when
-  /// it ran through the latest prices.
-  | { type: "result"; report: ReportView; posts: { A: PostView; B: PostView }; pinned_end: string | null }
+  /// it ran through the latest prices. swapped: the server put the posts in
+  /// the pair's fixed order, the reverse of how they were entered.
+  | { type: "result"; report: ReportView; posts: { A: PostView; B: PostView }; pinned_end: string | null; swapped: boolean }
   | { type: "error"; error: string; message: string; side?: "a" | "b" | "both" };

@@ -14,7 +14,7 @@ import { compare, type ComparisonReport } from "../lib/compare.js";
 import { loadFixture } from "../lib/fixture.js";
 import { anthropicTransport } from "../lib/llm.js";
 import { tiingoFromEnv } from "../lib/tiingo.js";
-import { pinnedWindowEnd } from "../server/posts.js";
+import { canonicalOrder, pinnedWindowEnd } from "../server/posts.js";
 import { round1 } from "../lib/weights.js";
 import { authorNamed } from "../lib/readings.js";
 
@@ -40,8 +40,11 @@ if (!a.ok) throw new Error(`${fa}: ${a.message}`);
 if (!b.ok) throw new Error(`${fb}: ${b.message}`);
 
 const { tiingo, prices, persist } = tiingoFromEnv();
+// One order per pair, so swapped arguments replay the cached comparison.
+const { posts: [postA, postB], swapped } = await canonicalOrder(a.value, b.value);
+if (swapped) console.log("Note: posts reordered to this pair's fixed order (A and B swapped).");
 // An example pair's pinned end date, so its numbers don't drift.
-const pin = await pinnedWindowEnd(a.value.post_id, b.value.post_id);
+const pin = await pinnedWindowEnd(postA.post_id, postB.post_id);
 if (!pin.ok) throw new Error(pin.message);
 const r = await compare(
   {
@@ -52,8 +55,8 @@ const r = await compare(
     ...(pin.value ? { end: pin.value } : {}),
     alternates,
   },
-  a.value,
-  b.value,
+  postA,
+  postB,
 );
 if (!r.ok) {
   console.error(`FAILED ${r.error}: ${r.message}\n(Tiingo requests this run: ${tiingo.requests}. Completed LLM steps are cached; rerunning doesn't pay for them again.)`);

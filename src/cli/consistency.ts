@@ -12,7 +12,7 @@ import { selfConsistency, DEFAULT_SAMPLES, type ConsistencyReport } from "../lib
 import { loadFixture } from "../lib/fixture.js";
 import { anthropicTransport, ledgerTotal } from "../lib/llm.js";
 import { tiingoFromEnv } from "../lib/tiingo.js";
-import { pinnedWindowEnd } from "../server/posts.js";
+import { canonicalOrder, pinnedWindowEnd } from "../server/posts.js";
 import { round1 } from "../lib/weights.js";
 import { authorNamed } from "../lib/readings.js";
 
@@ -41,8 +41,11 @@ if (!b.ok) throw new Error(`${fb}: ${b.message}`);
 const ledgerPath = ".cache/llm-ledger.jsonl";
 const spentBefore = await ledgerTotal(ledgerPath);
 const { tiingo, prices, persist } = tiingoFromEnv();
+// One order per pair, so swapped arguments replay the cached comparison.
+const { posts: [postA, postB], swapped } = await canonicalOrder(a.value, b.value);
+if (swapped) console.log("Note: posts reordered to this pair's fixed order (A and B swapped).");
 // An example pair's pinned end date, so its numbers don't drift.
-const pin = await pinnedWindowEnd(a.value.post_id, b.value.post_id);
+const pin = await pinnedWindowEnd(postA.post_id, postB.post_id);
 if (!pin.ok) throw new Error(pin.message);
 const r = await selfConsistency(
   {
@@ -52,8 +55,8 @@ const r = await selfConsistency(
     persistReport: persist,
     ...(pin.value ? { end: pin.value } : {}),
   },
-  a.value,
-  b.value,
+  postA,
+  postB,
   n,
 );
 const spent = (await ledgerTotal(ledgerPath)) - spentBefore;

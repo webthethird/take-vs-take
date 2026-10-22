@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { listDemoPairs, pinnedWindowEnd } from "../src/server/posts.js";
+import { canonicalOrder, listDemoPairs, pinnedWindowEnd } from "../src/server/posts.js";
 
 const A = "2077459480963616779";
 const B = "2099566262431203737";
@@ -60,5 +60,27 @@ describe("listDemoPairs", () => {
     );
     const pairs = await listDemoPairs(d);
     assert.deepEqual(pairs.map((p) => [p.id, p.window_end]), [["pair-01", "2026-10-21"]]);
+  });
+});
+
+describe("canonicalOrder", () => {
+  const post = (post_id: string) => ({ post_id });
+  const ids = (r: { posts: { post_id: string }[] }) => r.posts.map((p) => p.post_id);
+
+  it("keeps a candidate pair's A/B order whichever way the posts arrive", async () => {
+    // B (2099...) is later than A (2077...): the pre-registered order wins, not time.
+    const d = await root([{ id: "pair-01", a: B, b: A }]);
+    assert.deepEqual(ids(await canonicalOrder(post(B), post(A), d)), [B, A]);
+    const r = await canonicalOrder(post(A), post(B), d);
+    assert.deepEqual(ids(r), [B, A]);
+    assert.equal(r.swapped, true);
+  });
+
+  it("puts the earlier post first for any other pair, comparing IDs as numbers", async () => {
+    const d = await root([]);
+    assert.deepEqual(await canonicalOrder(post(A), post(C), d), { posts: [post(A), post(C)], swapped: false });
+    assert.deepEqual(await canonicalOrder(post(C), post(A), d), { posts: [post(A), post(C)], swapped: true });
+    // As strings "999" > "1000"; as IDs it's earlier.
+    assert.deepEqual(ids(await canonicalOrder(post("1000"), post("999"), d)), ["999", "1000"]);
   });
 });

@@ -18,7 +18,7 @@ import { z } from "zod";
 import type { CompareEvent } from "../../../lib/api.js";
 import { compare } from "../../../lib/compare.js";
 import { realDeps } from "../../../server/deps.js";
-import { pinnedWindowEnd, resolvePosts } from "../../../server/posts.js";
+import { canonicalOrder, pinnedWindowEnd, resolvePosts } from "../../../server/posts.js";
 import { reportView } from "../../../server/view.js";
 
 export const runtime = "nodejs";
@@ -44,7 +44,9 @@ export async function POST(req: Request): Promise<Response> {
 
   const posts = await resolvePosts(body.data.a, body.data.b);
   if (!posts.ok) return json(400, { type: "error", error: posts.error, message: posts.message, side: posts.side });
-  const pin = body.data.latest ? { ok: true as const, value: null } : await pinnedWindowEnd(posts.value[0].post_id, posts.value[1].post_id);
+  // One order per pair, so swapped links replay the cached comparison.
+  const { posts: [a, b], swapped } = await canonicalOrder(posts.value[0], posts.value[1]);
+  const pin = body.data.latest ? { ok: true as const, value: null } : await pinnedWindowEnd(a.post_id, b.post_id);
   if (!pin.ok) return json(500, { type: "error", error: "config", message: pin.message });
   if (running) return json(409, { type: "error", error: "busy", message: "A comparison is already running. Try again when it finishes." });
 
@@ -56,7 +58,6 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   running = true;
-  const [a, b] = posts.value;
   const enc = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -65,7 +66,7 @@ export async function POST(req: Request): Promise<Response> {
         const r = await compare({ ...deps.deps, onStage: (stage) => send({ type: "stage", stage }) }, a, b);
         if (r.ok) {
           const view = (p: typeof a) => ({ text: p.text, author_name: p.author_name ?? null, text_verified: p.provenance.text_verified });
-          send({ type: "result", report: reportView(r.value), posts: { A: view(a), B: view(b) }, pinned_end: pin.value });
+          send({ type: "result", report: reportView(r.value), posts: { A: view(a), B: view(b) }, pinned_end: pin.value, swapped });
         } else {
           send({ type: "error", error: r.error, message: r.message });
         }

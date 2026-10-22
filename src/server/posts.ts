@@ -66,17 +66,37 @@ export async function listDemoPairs(root = "."): Promise<DemoPair[]> {
   return (await readCandidates(root)).filter((p) => files.includes(`${p.id}-a.json`) && files.includes(`${p.id}-b.json`));
 }
 
+/// The candidate pair made of these two posts, in either order, if any.
+async function findCandidate(postIdA: string, postIdB: string, root: string): Promise<{ pair: DemoPair; aId: string | null } | undefined> {
+  const id = (u: string) => {
+    const r = parsePostUrl(u);
+    return r.ok ? r.value.postId : null;
+  };
+  const want = [postIdA, postIdB].sort().join(",");
+  for (const pair of await readCandidates(root)) {
+    const ids = [id(pair.a_url), id(pair.b_url)];
+    if ([...ids].sort().join(",") === want) return { pair, aId: ids[0]! };
+  }
+  return undefined;
+}
+
+/// One fixed order per pair of posts, so pasting the links swapped gives the
+/// same comparison (and replays its cached model calls) instead of a new,
+/// paid one. A candidate pair keeps its pre-registered A/B order; any other
+/// pair puts the earlier post first (post IDs grow with time). Each side is
+/// still built independently, so order changes only the labels.
+export async function canonicalOrder<T extends { post_id: string }>(a: T, b: T, root = "."): Promise<{ posts: [T, T]; swapped: boolean }> {
+  const found = await findCandidate(a.post_id, b.post_id, root);
+  const swapped = found ? found.aId === b.post_id : BigInt(b.post_id) < BigInt(a.post_id);
+  return { posts: swapped ? [b, a] : [a, b], swapped };
+}
+
 /// The pinned end date for two posts, if they are a candidate pair (in
 /// either order). Null means no pin: the window runs through the latest
 /// prices. A pin that isn't a real past date is an error, never ignored, so
 /// a typo can't silently turn a pinned example back into a rolling one.
 export async function pinnedWindowEnd(postIdA: string, postIdB: string, root = ".", now = new Date()): Promise<Result<string | null, "invalid_window_end">> {
-  const ids = (p: DemoPair) => [p.a_url, p.b_url].map((u) => {
-    const r = parsePostUrl(u);
-    return r.ok ? r.value.postId : null;
-  });
-  const want = [postIdA, postIdB].sort().join(",");
-  const pair = (await readCandidates(root)).find((p) => ids(p).sort().join(",") === want);
+  const pair = (await findCandidate(postIdA, postIdB, root))?.pair;
   if (!pair?.window_end) return { ok: true, value: null };
   const d = pair.window_end;
   const ms = Date.parse(`${d}T00:00:00Z`);

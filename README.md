@@ -35,7 +35,9 @@ post B ─▶ analyze ─▶ draft ─▶ weight ─┘                    │
 ```
 
 - **Independence.** Each side is analyzed and drafted without seeing the
-  other. No prompt asks for an "opposing" portfolio.
+  other. No prompt asks for an "opposing" portfolio. Each pair of posts has
+  one fixed order (an example's own A/B, otherwise the earlier post first),
+  so entering the links either way gives the same, cached comparison.
 - **Abstention.** Jokes, moral views and vague takes return
   `not_investable` with a reason instead of tickers.
 - **Deterministic weights.** The model picks holdings, a conviction tier for

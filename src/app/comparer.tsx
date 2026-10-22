@@ -65,7 +65,14 @@ export function Comparer({ pairs }: { pairs: DemoPair[] }) {
           const ev = JSON.parse(buf.slice(0, nl)) as CompareEvent;
           buf = buf.slice(nl + 1);
           if (ev.type === "stage") setStages((s) => [...s, stageKey(ev.stage)]);
-          else if (ev.type === "result") setResult(ev);
+          else if (ev.type === "result") {
+            setResult(ev);
+            // Show the fields in the order the comparison actually used.
+            if (ev.swapped) {
+              setA(urlB);
+              setB(urlA);
+            }
+          }
           else setError({ message: ev.message, side: ev.side });
         }
       }
@@ -118,6 +125,12 @@ export function Comparer({ pairs }: { pairs: DemoPair[] }) {
           </button>
         </form>
         {error && <p className="error">{localTimes(error.message)}</p>}
+        {result?.swapped && !busy && (
+          <p className="pinned">
+            First and second take were swapped: each pair of posts has one fixed order (an example&apos;s own order, otherwise the earlier post
+            first), so entering them either way gives the same comparison.
+          </p>
+        )}
         {result?.pinned_end && !busy && (
           <p className="pinned">
             This example runs through {result.pinned_end}, a fixed date, so its numbers stay the same between runs.{" "}
