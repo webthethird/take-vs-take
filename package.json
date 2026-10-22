@@ -2,6 +2,7 @@
   "name": "take-vs-take",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Two X posts in, two hypothetical portfolios out, compared fairly over a common window.",
   "type": "module",
   "scripts": {

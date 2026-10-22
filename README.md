@@ -1,0 +1,124 @@
+# Take vs. Take
+
+Two X posts in, two hypothetical portfolios out, compared fairly.
+
+Each post is read on its own and translated into a long-only paper portfolio
+(or an explicit abstention, when the post isn't investable). Only after both
+portfolios are frozen does the app load prices and compare them: whether the
+opinions agree, whether the portfolios hold the same tickers, whether their
+daily returns move together, what drives them, how faithfully each portfolio
+follows its post, and how each did against SPY over the same window.
+
+The point is the comparison. Rhetorically opposed posts can imply portfolios
+that move together, and similar-sounding posts can imply very different risk.
+Those mismatches are reported as findings, not hidden.
+
+> **Not investment advice.** Every portfolio here is an AI-generated,
+> hypothetical interpretation of a public post. The posts' authors did not
+> pick, hold or endorse these allocations, and the backtested returns say
+> nothing about whether an author was right.
+>
+> **No affiliation.** This is an independent project. It is not affiliated
+> with or endorsed by Supertake, X, Tiingo or Anthropic. Some weighting
+> defaults were calibrated against observed output from Supertake's public
+> take-to-portfolio builder; see `docs/PLAN.md`.
+
+## How it works
+
+```
+post A ─▶ analyze ─▶ draft ─▶ weight ─┐
+                                      ├─▶ FREEZE ─▶ align opinions, shared drivers, fidelity
+post B ─▶ analyze ─▶ draft ─▶ weight ─┘                    │
+                                         prices unlocked only here
+                                                           ▼
+                                  backtest A, B, SPY ─▶ co-movement ─▶ findings
+```
+
+- **Independence.** Each side is analyzed and drafted without seeing the
+  other. No prompt asks for an "opposing" portfolio.
+- **Abstention.** Jokes, moral views and vague takes return
+  `not_investable` with a reason instead of tickers.
+- **Deterministic weights.** The model picks holdings, a conviction tier for
+  each, a concentration style and a cash level; a fixed, versioned rule
+  (`src/lib/weights.ts`) turns those into weights.
+- **No look-ahead in construction.** Price access goes through a gate that
+  opens only after both portfolios are frozen with their model and prompt
+  versions. This does not remove hindsight the model may have learned in
+  pretraining; pairs posted after the model's training cutoff avoid that.
+- **Common window.** Both portfolios enter at the close of the first trading
+  day after the later post's date (US Eastern) and are held to the same end
+  date (buy and hold, adjusted closes, uninvested cash returns 0%). A thesis
+  carried forward from an older post is flagged.
+- **Co-movement.** Daily-return correlation over the year *before* the posts
+  (raw, and beyond market exposure), with a 95% interval. A direction is
+  stated only when the interval excludes zero.
+- **Model readings are labeled as such.** The shared-drivers prediction is
+  sampled three times and the split is shown; fidelity labels each holding as
+  named by the post, a direct expression, a stand-in, or an addition.
+
+`docs/PLAN.md` records the design decisions, data contracts and open
+questions in more detail. `fixtures/candidates.md` lists the evaluation pairs
+with selection criteria written before any of them was analyzed.
+
+## Running it
+
+Developed on Node 26 with pnpm.
+
+```sh
+pnpm install
+cp .env.example .env   # then fill in the keys; see the comments in the file
+pnpm test
+pnpm dev               # http://127.0.0.1:3000
+```
+
+You need a [Tiingo](https://www.tiingo.com) token for prices and an
+[Anthropic API](https://console.anthropic.com) key for the model calls.
+`LLM_BUDGET_USD` caps model spend per process; results are cached, so reruns
+replay for free. A new pair has cost well under $1 in model calls so far.
+
+**Posts are not fetched from X yet.** Each post is a hand-written JSON fixture
+in `fixtures/private/` (gitignored, since post text belongs to its author):
+
+```json
+{
+  "url": "https://x.com/<handle>/status/<id>",
+  "author_handle": "<handle>",
+  "text": "Full post text, verbatim.",
+  "attachments": ["image"],
+  "retrieved_at": "2026-10-19T00:00:00Z"
+}
+```
+
+The post time is derived from the status ID. The web UI lists pairs from
+`fixtures/candidates.md` whose two fixtures exist, as
+`fixtures/private/pair-NN-a.json` and `pair-NN-b.json`. From the command line:
+
+```sh
+pnpm compare fixtures/private/pair-01-a.json fixtures/private/pair-01-b.json
+pnpm interpret fixtures/synthetic/*.json    # one post at a time, synthetic examples
+```
+
+### Tiingo plan
+
+Set `TIINGO_PLAN` to match your subscription. On `starter`, Tiingo's terms
+forbid storing its data or results derived from it, so nothing is cached and
+no report is saved. `power` allows caching. The UI charts only portfolios of
+two or more holdings with none above 80% of invested weight, and never charts
+SPY or a single security, so the page doesn't redistribute a price series.
+Price data is sourced by Tiingo.
+
+## Limitations
+
+- Retrospective backtests over short windows (weeks to a few months for
+  post-cutoff pairs). Returns describe one hypothetical implementation over
+  one period.
+- The correlation interval assumes independent daily returns and is likely
+  too narrow.
+- Holdings overlap compares tickers only; an ETF and its constituents count
+  as no overlap (co-movement still captures it).
+- Model readings vary from run to run, and the evaluation pairs were also
+  used to tune the prompts, so they are not a held-out test.
+
+## License
+
+[MIT](LICENSE)

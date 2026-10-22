@@ -64,7 +64,7 @@ The post date is **not** a field: it is computed from the post ID and can't be w
 - b_depends_on: a t.co link (content unknown)
 - found_via:
 - why: Intuitively opposing economic exposures. Our first real-data check showed oil moving against the market in Oct 2025–Oct 2026, a good test of the co-movement explanation.
-- notes: Checked 2026-10-19: A 2026-08-10, B 2026-07-28, both after the training cutoff. A is a data-backed claim; B is more enthusiasm than argument (the weaker side).
+- notes: Checked 2026-10-19: A 2026-08-10, B 2026-07-28, both after the training cutoff. A cites data; B states its view with less supporting argument in the text itself.
 
 ## pair-03
 
@@ -92,7 +92,7 @@ The post date is **not** a field: it is computed from the post ID and can't be w
 - b_depends_on: image; oEmbed truncates it
 - found_via: B: X search for Tesla-bear posts in the poster's own voice
 - why: Two interpretations of automotive disruption. A bearish-on-Tesla reading tests long-only translation (Supertake's own builder turned "Tesla is overvalued" into long rivals, including NVDA and GOOGL).
-- notes: B replaced and relabeled 2026-10-19, before any analysis (was 'Legacy manufacturers are undervalued'; no own-voice legacy-auto bull found). A 2026-08-21, B 2026-07-26. A includes SpaceX, which may not be investable. B's figures are the author's assertions, not checked. B is clickbait in tone but makes two substantive arguments.
+- notes: B replaced and relabeled 2026-10-19, before any analysis (was 'Legacy manufacturers are undervalued'; no own-voice legacy-auto bull found). A 2026-08-21, B 2026-07-26. A includes SpaceX, which may not be investable. B's figures are the author's assertions, not checked. B's framing is promotional but it makes two substantive arguments.
 
 ## pair-05
 

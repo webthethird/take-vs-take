@@ -18,27 +18,27 @@ function ok<T>(r: { ok: true; value: T } | { ok: false; message: string }): T {
 
 describe("parsePostUrl: accepted variants", () => {
   const variants = [
-    `https://x.com/mignano/status/${ID}`,
-    `https://twitter.com/mignano/status/${ID}`,
-    `https://www.x.com/mignano/status/${ID}`,
-    `https://mobile.twitter.com/mignano/status/${ID}`,
-    `http://x.com/mignano/status/${ID}`,
-    `x.com/mignano/status/${ID}`,
-    `  https://x.com/mignano/status/${ID}  `,
-    `https://x.com/mignano/status/${ID}?s=20&t=abcdef`,
-    `https://x.com/mignano/status/${ID}#reply`,
-    `https://x.com/mignano/status/${ID}/`,
-    `https://x.com/mignano/status/${ID}/photo/1`,
-    `https://x.com/mignano/status/${ID}/analytics`,
-    `https://twitter.com/mignano/statuses/${ID}`,
-    `https://X.COM/mignano/status/${ID}`,
+    `https://x.com/example_user/status/${ID}`,
+    `https://twitter.com/example_user/status/${ID}`,
+    `https://www.x.com/example_user/status/${ID}`,
+    `https://mobile.twitter.com/example_user/status/${ID}`,
+    `http://x.com/example_user/status/${ID}`,
+    `x.com/example_user/status/${ID}`,
+    `  https://x.com/example_user/status/${ID}  `,
+    `https://x.com/example_user/status/${ID}?s=20&t=abcdef`,
+    `https://x.com/example_user/status/${ID}#reply`,
+    `https://x.com/example_user/status/${ID}/`,
+    `https://x.com/example_user/status/${ID}/photo/1`,
+    `https://x.com/example_user/status/${ID}/analytics`,
+    `https://twitter.com/example_user/statuses/${ID}`,
+    `https://X.COM/example_user/status/${ID}`,
   ];
   for (const v of variants) {
     it(JSON.stringify(v), () => {
       const p = ok(parsePostUrl(v));
       assert.equal(p.postId, ID);
-      assert.equal(p.handle, "mignano");
-      assert.equal(p.canonicalUrl, `https://x.com/mignano/status/${ID}`);
+      assert.equal(p.handle, "example_user");
+      assert.equal(p.canonicalUrl, `https://x.com/example_user/status/${ID}`);
     });
   }
 
@@ -52,8 +52,8 @@ describe("parsePostUrl: accepted variants", () => {
   });
 
   it("preserves handle case for display; identity is the ID", () => {
-    const p = ok(parsePostUrl(`https://x.com/MiGnAnO/status/${ID}`));
-    assert.equal(p.handle, "MiGnAnO");
+    const p = ok(parsePostUrl(`https://x.com/ExAmPlE_uSeR/status/${ID}`));
+    assert.equal(p.handle, "ExAmPlE_uSeR");
     assert.equal(p.postId, ID);
   });
 
@@ -72,7 +72,7 @@ describe("parsePostUrl: rejected inputs", () => {
     [`https://vxtwitter.com/a/status/${ID}`, "unsupported_host"],
     [`https://x.com.evil.example/a/status/${ID}`, "unsupported_host"],
     [`https://evilx.com/a/status/${ID}`, "unsupported_host"],
-    ["https://x.com/mignano", "not_a_status_url"],
+    ["https://x.com/example_user", "not_a_status_url"],
     ["https://x.com/home", "not_a_status_url"],
     ["https://x.com/search?q=status", "not_a_status_url"],
     ["https://x.com/i/lists/123", "not_a_status_url"],
@@ -135,13 +135,13 @@ describe("parsePostUrlPair", () => {
   const other = "2106035941835944199";
 
   it("accepts two different posts", () => {
-    const [a, b] = ok(parsePostUrlPair(`x.com/mignano/status/${ID}`, `https://x.com/mignano/status/${other}`));
+    const [a, b] = ok(parsePostUrlPair(`x.com/example_user/status/${ID}`, `https://x.com/example_user/status/${other}`));
     assert.equal(a.postId, ID);
     assert.equal(b.postId, other);
   });
 
   it("rejects the same post written two different ways", () => {
-    const r = parsePostUrlPair(`https://twitter.com/MIGNANO/status/${ID}?s=20`, `https://x.com/i/status/${ID}`);
+    const r = parsePostUrlPair(`https://twitter.com/EXAMPLE_USER/status/${ID}?s=20`, `https://x.com/i/status/${ID}`);
     assert.equal(r.ok, false);
     if (!r.ok) {
       assert.equal(r.error, "same_post");

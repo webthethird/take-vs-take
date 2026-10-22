@@ -5,9 +5,9 @@ import { fixtureToPostInput } from "../src/lib/fixture.js";
 const NOW = new Date("2026-10-19T00:00:00Z");
 
 const base = {
-  url: "https://twitter.com/mignano/status/2104572633027080443?s=20",
-  author_handle: "mignano",
-  author_name: "Michael Mignano",
+  url: "https://twitter.com/example_user/status/2104572633027080443?s=20",
+  author_handle: "example_user",
+  author_name: "Example User",
   text: "Example post text.",
   retrieved_at: "2026-10-19T00:00:00Z",
 };
@@ -18,7 +18,7 @@ describe("fixtureToPostInput", () => {
     assert.ok(r.ok, !r.ok ? r.message : "");
     if (!r.ok) return;
     assert.equal(r.value.post_id, "2104572633027080443");
-    assert.equal(r.value.url, "https://x.com/mignano/status/2104572633027080443");
+    assert.equal(r.value.url, "https://x.com/example_user/status/2104572633027080443");
     assert.equal(r.value.created_at, "2026-09-28T14:03:11.439Z");
     assert.equal(r.value.provenance.source, "fixture_manual");
     assert.equal(r.value.provenance.text_verified, false);
@@ -44,7 +44,7 @@ describe("fixtureToPostInput", () => {
   });
 
   it("compares handles case-insensitively", () => {
-    const r = fixtureToPostInput({ ...base, author_handle: "Mignano" }, NOW);
+    const r = fixtureToPostInput({ ...base, author_handle: "Example_User" }, NOW);
     assert.ok(r.ok);
   });
 
@@ -55,7 +55,7 @@ describe("fixtureToPostInput", () => {
   });
 
   it("rejects a non-status URL", () => {
-    const r = fixtureToPostInput({ ...base, url: "https://x.com/mignano" }, NOW);
+    const r = fixtureToPostInput({ ...base, url: "https://x.com/example_user" }, NOW);
     assert.equal(r.ok, false);
     if (!r.ok) assert.equal(r.error, "invalid_url");
   });
@@ -76,6 +76,6 @@ describe("toThesisInput", () => {
     const t = toThesisInput(r.value);
     assert.deepEqual(Object.keys(t).sort(), ["attachments", "context", "created_at", "synthetic", "text"]);
     assert.deepEqual(t.attachments, ["image", "link"]);
-    assert.doesNotMatch(JSON.stringify(t), /mignano|Mignano|x\.com/);
+    assert.doesNotMatch(JSON.stringify(t), /example_user|Example_User|x\.com/);
   });
 });
