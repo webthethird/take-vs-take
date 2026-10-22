@@ -165,6 +165,30 @@ The post date is **not** a field: it is computed from the post ID and can't be w
 
 ---
 
+## Post-hoc pairs
+
+Pairs chosen **after** seeing their results, kept for the record and as
+labeled illustrations. They are not pre-registered: never count them as
+evidence alongside the numbered pairs above. Same fields, `## posthoc-NN`
+headings.
+
+## posthoc-01
+
+- category: opposing
+- subject: Oil after the Iran escalation
+- a_url: https://x.com/MBAeconomics1/status/2078842553219105154
+- a_label: oil will spike this week (gold flat)
+- a_depends_on: none
+- b_url: https://x.com/DeItaone/status/2081734300177678466
+- b_label: airlines rally as oil plunges (news report)
+- b_depends_on: none
+- found_via: developer's ad-hoc comparison in the app (posts fetched from X), 2026-10-22
+- window_end: 2026-10-21
+- why: First pair seen with negative co-movement: ex-ante raw correlation -0.45 (95% interval -0.54 to -0.34), -0.40 beyond the market. Long oil vs. long airlines.
+- notes: Added 2026-10-22 **after** it had been analyzed and backtested, so it breaks criteria 1 and 4: it was chosen because of a result, and its category was assigned afterwards. A is 2026-07-19, B is 2026-07-27, both after the training cutoff, 8 days apart. A is a call about the coming week; the backtest holds for months. B is a news headline relaying market moves, not the poster's own view (the same reason pair-04's first B was rejected); the analysis labeled it "descriptive" yet still built a portfolio. No saved fixtures (X content isn't stored past 30 days), so it isn't an example button.
+
+---
+
 ## Rejected candidates
 
 Pairs considered and dropped, and why. Keep these: they document the selection.

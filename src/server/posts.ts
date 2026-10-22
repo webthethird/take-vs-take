@@ -40,7 +40,8 @@ export async function readCandidates(root = "."): Promise<DemoPair[]> {
   for (const section of md.split(/^## /m).slice(1)) {
     const id = section.split("\n", 1)[0]!.trim();
     const field = (k: string) => section.match(new RegExp(`^- ${k}: (.*)$`, "m"))?.[1]?.trim() ?? "";
-    if (!/^pair-\d+$/.test(id)) continue;
+    // Pre-registered pairs, and post-hoc ones (chosen after seeing results).
+    if (!/^(pair|posthoc)-\d+$/.test(id)) continue;
     out.push({
       id,
       subject: field("subject"),

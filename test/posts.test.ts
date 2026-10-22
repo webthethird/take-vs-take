@@ -30,6 +30,11 @@ describe("pinnedWindowEnd", () => {
     assert.deepEqual(await pinnedWindowEnd(B, A, d, NOW), { ok: true, value: "2026-10-21" });
   });
 
+  it("reads post-hoc pairs too", async () => {
+    const d = await root([{ id: "posthoc-01", a: A, b: B, end: "2026-10-21" }]);
+    assert.deepEqual(await pinnedWindowEnd(B, A, d, NOW), { ok: true, value: "2026-10-21" });
+  });
+
   it("is null for a pair with no pin, or posts that aren't a candidate pair", async () => {
     const d = await root([
       { id: "pair-01", a: A, b: B, end: "" },
