@@ -269,9 +269,11 @@ portfolio's economic character, so it isn't removed from the headline.
 approximate 95% interval from the Fisher transform, `tanh(atanh ρ ± 1.96/√(n−3))`.
 A direction ("tend to move together / apart") is stated only when the interval
 excludes zero. Otherwise: "no clear relationship". The interval assumes
-independent daily returns. Real returns cluster in volatility and have fat
-tails, so it is likely too narrow: a minimum bar for stating a direction, not a
-precise uncertainty. No thresholds beyond this until there's data to calibrate them.
+independent daily returns, which real returns are not (volatility clusters,
+tails are fat). A moving-block bootstrap check on the evaluation pairs found
+this costs nothing over the 252-day estimation window (§10 item 9); it is still
+a minimum bar for stating a direction, not a precise uncertainty. No thresholds
+beyond this until there's data to calibrate them.
 
 ### 5.3 Holdings overlap
 
@@ -407,7 +409,7 @@ network access, and an uninvestable fixture produces no portfolio.
 6. X developer agreement terms for storing and displaying post text.
 7. Price-data licensing for a public demo.
 8. Thesis-alignment label set and its eval: how to check the LLM's alignment judgments against human judgment.
-9. Whether the Fisher interval needs a correction for autocorrelated or heteroskedastic returns (e.g. a block bootstrap) before public use.
+9. ~~Whether the Fisher interval needs a correction for autocorrelated or heteroskedastic returns (e.g. a block bootstrap) before public use.~~ Checked 2026-10-22, no correction: `pnpm ci-check` compares Fisher with a circular moving-block bootstrap (blocks of 1, 5, 10 and 20 days; A, B and SPY resampled together; β re-fit per resample; 2,000 resamples) on the 7 evaluation pairs that produced portfolios. Over the 252-day ex-ante window, 0 of 56 bootstrap intervals (raw and residual) changed the direction; endpoints moved by at most about 0.04. Lag-1 autocorrelation of the A×B return products was −0.10 to 0.01, except 0.25 on the SaaS pair, whose intervals still matched. On the 26–67-day realized windows, 5 of 28 disagreed, and in 4 the bootstrap was the *more* confident (on 26 days it turned pair-06's "no clear relationship" into "together"): a percentile bootstrap undercovers at small n, so it is no fix there. Limits: one market year (2025–26), no crash-like regime; rerun the check after adding pairs from a different period.
 10. **Default interpretation breadth.** The prompt asks for the broadest reading that covers the main claim; on the bearish synthetic post the model chose a narrower one ("money-center banks" over a mix). Supertake's "Build it now" chose the mix. Evaluate on real pairs before tuning.
 11. **ETF look-through for holdings overlap.** A draft can hold both ITB and its constituents (DHI, LEN, PHM); across sides, ITB vs. DHI counts as zero overlap. Co-movement captures it; holdings overlap doesn't.
 13. **Presentation of combined findings.** On the first real pair, "opinions conflict but portfolios move together" and "together raw, apart beyond the market" are both true and read as contradictory side by side; the second explains the first. The report should present them as one story.

@@ -96,6 +96,7 @@ The post time is derived from the status ID. The web UI lists pairs from
 ```sh
 pnpm compare fixtures/private/pair-01-a.json fixtures/private/pair-01-b.json
 pnpm interpret fixtures/synthetic/*.json    # one post at a time, synthetic examples
+pnpm ci-check                               # Fisher vs. block-bootstrap intervals on saved comparisons
 ```
 
 ### Tiingo plan
@@ -112,8 +113,11 @@ Price data is sourced by Tiingo.
 - Retrospective backtests over short windows (weeks to a few months for
   post-cutoff pairs). Returns describe one hypothetical implementation over
   one period.
-- The correlation interval assumes independent daily returns and is likely
-  too narrow.
+- The correlation interval (Fisher) assumes independent daily returns. A
+  block-bootstrap check on the evaluation pairs agreed with it on every
+  stated direction (`pnpm ci-check`; details in `docs/PLAN.md` §10), but that
+  covers one market year, without a crash. Directions over the short
+  comparison windows are shown for reference only.
 - Holdings overlap compares tickers only; an ETF and its constituents count
   as no overlap (co-movement still captures it).
 - Model readings vary from run to run, and the evaluation pairs were also

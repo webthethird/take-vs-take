@@ -14,7 +14,8 @@
     "prices": "tsx src/cli/prices.ts",
     "interpret": "tsx src/cli/interpret.ts",
     "compare": "tsx src/cli/compare.ts",
-    "consistency": "tsx src/cli/consistency.ts"
+    "consistency": "tsx src/cli/consistency.ts",
+    "ci-check": "tsx src/cli/ci-check.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",

@@ -172,9 +172,11 @@ export function correlationStats(ra: number[], rb: number[], rm: number[]): Corr
 }
 
 /// Approximate 95% interval for a Pearson ρ via the Fisher transform:
-/// tanh(atanh ρ ± 1.96 / √(n − 3)). Assumes independent observations. Daily
-/// returns cluster in volatility and have fat tails, so this is likely too
-/// narrow: a minimum bar for stating a direction, not a precise uncertainty.
+/// tanh(atanh ρ ± 1.96 / √(n − 3)). Assumes independent observations, which
+/// daily returns are not (volatility clusters, tails are fat). Checked
+/// against a moving-block bootstrap on the evaluation pairs (`pnpm ci-check`,
+/// docs/PLAN.md §10 item 9): over the 252-day estimation window the two
+/// agreed on every direction. Not checked in a crash-like regime.
 /// Null when n < 4, where the formula is undefined.
 export function fisherInterval(r: number, n: number): Interval | null {
   if (n < 4) return null;
@@ -218,7 +220,26 @@ export type ExAnteResult = CorrelationStats & {
 
 export type ExAnteError = "insufficient_history" | "missing_series";
 
+export type ExAnteReturns = {
+  /// Daily returns of A, B and the benchmark over the estimation window.
+  ra: number[];
+  rb: number[];
+  rm: number[];
+  window: ExAnteResult["window"];
+  coverage: ExAnteResult["coverage"];
+  excluded: ExAnteResult["excluded"];
+};
+
 export function exAnteCorrelation(input: ExAnteInput): Result<ExAnteResult, ExAnteError> {
+  const r = exAnteReturns(input);
+  if (!r.ok) return r;
+  const { ra, rb, rm, ...rest } = r.value;
+  return { ok: true, value: { version: OVERLAP_VERSION, ...correlationStats(ra, rb, rm), ...rest } };
+}
+
+/// The aligned daily return series exAnteCorrelation works on. Exported for
+/// diagnostics (src/cli/ci-check.ts) that need the series, not just ρ.
+export function exAnteReturns(input: ExAnteInput): Result<ExAnteReturns, ExAnteError> {
   const before = etDate(new Date(input.cutoff));
   const benchBars = input.benchmark.bars.filter((b) => b.date < before);
   if (benchBars.length < ESTIMATION_DAYS + 1) {
@@ -270,8 +291,9 @@ export function exAnteCorrelation(input: ExAnteInput): Result<ExAnteResult, ExAn
   return {
     ok: true,
     value: {
-      version: OVERLAP_VERSION,
-      ...correlationStats(A.value.r, B.value.r, rm),
+      ra: A.value.r,
+      rb: B.value.r,
+      rm,
       window: { start: calendar[0]!, end: calendar.at(-1)! },
       coverage: { a: A.value.coverage, b: B.value.coverage },
       excluded,
