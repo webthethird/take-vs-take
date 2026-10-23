@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { z } from "zod";
+import { VOICE_SYSTEM } from "../src/lib/interpret.js";
 import {
   EXPIRING_DIR,
   costUsd,
@@ -37,6 +38,35 @@ export function scripted(responses: (Partial<ModelResponse> | Error)[]): Transpo
         content: [{ type: "text", text: "{}", citations: null }] as ModelResponse["content"],
         usage: { input_tokens: 1000, output_tokens: 500, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
         ...next,
+      };
+    },
+  };
+}
+
+/// Routes voice-classification calls to their own script (default: every
+/// post states its own view), so pipeline tests keep their response order
+/// and request counts. Voice requests are recorded separately.
+export function withVoice<T extends Transport & { requests: ModelRequest[] }>(
+  main: T,
+  voices: unknown[] = [],
+): Transport & { requests: ModelRequest[]; voiceRequests: ModelRequest[] } {
+  const voiceRequests: ModelRequest[] = [];
+  return {
+    requests: main.requests,
+    voiceRequests,
+    async call(req) {
+      if (req.system !== VOICE_SYSTEM) return main.call(req);
+      voiceRequests.push(structuredClone({ ...req, outputSchema: undefined as never }));
+      const parsed = voices.length > 0 ? voices.shift() : { voice: "own_view", commentary: null, reason: "States a view." };
+      if (parsed instanceof Error) throw parsed;
+      return {
+        id: `msg_voice_${voiceRequests.length}`,
+        model: req.model,
+        stopReason: "end_turn",
+        refusalCategory: null,
+        parsed,
+        content: [{ type: "text", text: "{}", citations: null }] as ModelResponse["content"],
+        usage: { input_tokens: 100, output_tokens: 50, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
       };
     },
   };

@@ -15,6 +15,7 @@ import { etDate, type PriceSource } from "./prices.js";
 import { err, type Result } from "./result.js";
 import {
   PortfolioDraft,
+  PostVoice,
   ThesisAnalysis,
   type ThesisInput,
 } from "./schema.js";
@@ -32,6 +33,7 @@ export const DRAFT_PROMPT_VERSION = "draft-v1";
 /// Author-named readings: the same prompt plus the "named" style. A separate
 /// version, so inferred readings keep their exact prompt and cached drafts.
 export const DRAFT_NAMED_PROMPT_VERSION = "draft-named-v2";
+export const VOICE_PROMPT_VERSION = "voice-v1";
 export const MAX_REPAIRS = 2;
 
 // ── Prompts ──────────────────────────────────────────────────────────────
@@ -193,7 +195,7 @@ type RepairError = LlmError | "invalid_after_repair";
 /// assistant content (thinking blocks included) is passed back unchanged.
 async function callWithRepair<S extends z.ZodType>(
   cfg: LlmConfig,
-  base: { promptVersion: string; system: string; schema: S; nonce?: string },
+  base: { promptVersion: string; system: string; schema: S; nonce?: string; maxTokens?: number; effort?: "low" | "medium" | "high" },
   firstUser: Rendered,
   validate: (v: z.infer<S>) => Promise<string[]>,
 ): Promise<Result<RepairOutcome<z.infer<S>>, RepairError> & { attempts: Attempt[] }> {
@@ -278,6 +280,41 @@ export async function analyzeThesis(
   return { ok: true, value: { analysis: r.value.value, attempts: r.value.attempts }, attempts: r.attempts };
 }
 
+// ── Voice ────────────────────────────────────────────────────────────────
+
+export const VOICE_SYSTEM = `You decide whose view a social-media post states. You see the post's text and date, and the post it replies to or quotes, if any. You are not told who wrote it.
+
+- own_view: the poster argues, predicts or states a view of their own, even when they cite news or data in support.
+- news_with_commentary: the post mainly reports news (a headline, a company announcement, an earnings result, a price move, someone else's statement) and adds the poster's own reading of what it means. Quote that reading verbatim in "commentary", as one continuous passage of the post.
+- news_only: the post reports news, prices or someone else's statement and adds no view of its own. Restating the news, or a headline's own framing ("airlines jump as oil plunges"), is not a view.
+
+Judge the post itself, not the post it quotes or replies to.`;
+
+export type VoiceRun = { voice: PostVoice; attempts: Attempt[] };
+
+/// Text only: a news card's image repeats its headline, and the text decides
+/// whether the poster added a view.
+export async function classifyVoice(
+  cfg: LlmConfig,
+  input: ThesisInput,
+  opts: { nonce?: string } = {},
+): Promise<Result<VoiceRun, RepairError> & { attempts: Attempt[] }> {
+  const r = await callWithRepair(
+    cfg,
+    { promptVersion: VOICE_PROMPT_VERSION, system: VOICE_SYSTEM, schema: PostVoice, nonce: opts.nonce, maxTokens: 4000, effort: "low" },
+    renderPost({ ...input, media: [] }),
+    async (v) => voiceProblems(v, input),
+  );
+  if (!r.ok) return r;
+  return { ok: true, value: { voice: r.value.value, attempts: r.value.attempts }, attempts: r.attempts };
+}
+
+export function voiceProblems(v: PostVoice, input: Pick<ThesisInput, "text">): string[] {
+  if (v.voice !== "news_with_commentary") return v.commentary === null ? [] : [`commentary must be null for ${v.voice}.`];
+  if (!v.commentary) return ["news_with_commentary needs the poster's commentary, quoted verbatim."];
+  return norm(input.text).includes(norm(v.commentary)) ? [] : [`Commentary is not a verbatim passage of the post: "${v.commentary}"`];
+}
+
 // ── Draft ────────────────────────────────────────────────────────────────
 
 /// `problem` is the model's to fix (unknown or stale ticker). `unavailable`
@@ -328,14 +365,14 @@ export async function draftPortfolio(
   analysis: ThesisAnalysis,
   interpretationId: string,
   checkTickers: TickerCheck,
-  opts: { nonce?: string } = {},
+  opts: { nonce?: string; voice?: PostVoice | null } = {},
 ): Promise<Result<DraftRun, RepairError | "invalid_request" | "ticker_check_unavailable"> & { attempts: Attempt[] }> {
   const interp = analysis.interpretations.find((i) => i.id === interpretationId);
   if (analysis.status !== "investable" || !interp) {
     return { ...err("invalid_request", `No investable interpretation "${interpretationId}" to draft.`), attempts: [] };
   }
 
-  const named = authorNamed(analysis, interp);
+  const named = authorNamed(analysis, interp, opts.voice);
   const user = withText(
     renderPost(input),
     `<analysis>\n${JSON.stringify({ economic_claim: analysis.economic_claim, direction: analysis.direction, subjects: analysis.subjects, horizon: analysis.horizon, missing: analysis.missing }, null, 2)}\n</analysis>`,

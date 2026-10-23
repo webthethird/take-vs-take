@@ -9,7 +9,7 @@ import type { Portfolio } from "../src/lib/weights.js";
 import type { LlmConfig } from "../src/lib/llm.js";
 import { fixtureSource, type PriceBar, type PriceSource } from "../src/lib/prices.js";
 import { PostInput, type Fidelity, type PortfolioDraft, type SharedDrivers, type ThesisAlignment, type ThesisAnalysis } from "../src/lib/schema.js";
-import { scripted } from "./llm.test.js";
+import { scripted, withVoice } from "./llm.test.js";
 
 // ── Synthetic world ──────────────────────────────────────────────────────
 
@@ -91,10 +91,10 @@ after(async () => {
   for (const d of dirs) await rm(d, { recursive: true, force: true });
 });
 
-async function setup(responses: unknown[], source?: PriceSource) {
+async function setup(responses: unknown[], source?: PriceSource, voices: unknown[] = []) {
   const d = await mkdtemp(join(tmpdir(), "tvt-cmp-"));
   dirs.push(d);
-  const t = scripted(responses.map((parsed) => ({ parsed })));
+  const t = withVoice(scripted(responses.map((parsed) => ({ parsed }))), voices);
   const llm: LlmConfig = { transport: t, budgetUsd: 5, cacheDir: join(d, "llm"), ledgerPath: join(d, "ledger.jsonl") };
   const reads: { ticker: string; start: string; end: string }[] = [];
   const base = source ?? fixtureSource(data);
@@ -135,9 +135,9 @@ describe("compare", () => {
     const r = await compare(deps, postA, fromX);
     assert.ok(r.ok, !r.ok ? r.message : "");
     const files = async (d: string) => (await readdir(d)).filter((f) => f.endsWith(".json"));
-    // A (a saved fixture): analysis, draft, fidelity. B and everything joint: analysis, draft, alignment, drivers, fidelity.
-    assert.equal((await files(deps.llm.cacheDir)).length, 3);
-    assert.equal((await files(join(deps.llm.cacheDir, "expiring"))).length, 5);
+    // A (a saved fixture): analysis, voice, draft, fidelity. B and everything joint: those four, alignment, drivers.
+    assert.equal((await files(deps.llm.cacheDir)).length, 4);
+    assert.equal((await files(join(deps.llm.cacheDir, "expiring"))).length, 6);
   });
 
   it("runs the full pipeline: freeze first, then outcomes", async () => {
@@ -188,7 +188,7 @@ describe("compare", () => {
     const { deps } = await setup(happy);
     const stages: string[] = [];
     await compare({ ...deps, onStage: (s) => stages.push("side" in s ? `${s.stage}:${s.side}` : s.stage) }, postA, postB);
-    assert.deepEqual(stages, ["analyze:A", "draft:A", "analyze:B", "draft:B", "frozen", "align", "drivers", "fidelity:A", "fidelity:B", "prices", "backtest"]);
+    assert.deepEqual(stages, ["analyze:A", "voice:A", "draft:A", "analyze:B", "voice:B", "draft:B", "frozen", "align", "drivers", "fidelity:A", "fidelity:B", "prices", "backtest"]);
   });
 
   it("alignment sees both posts but no authors and no portfolios", async () => {
@@ -568,6 +568,35 @@ describe("default reading", () => {
     assert.equal(a.portfolio!.interpretation_id, "i2");
     assert.match(t.requests[1]!.messages[0]!.content as string, /<interpretation_to_build>\s*\{\s*"id": "i2"/);
     assert.equal(r.value.sides[1]!.model_default, null);
+  });
+
+  it("a post that only reports news never counts as the author naming what to own", async () => {
+    const broad: ThesisAnalysis = { ...analysis("rails", "Buy the railroads."), targets: named, interpretations: [reading("i1", false), reading("i2", true)], default_interpretation: "i1" };
+    const news = { voice: "news_only", commentary: null, reason: "A headline." };
+    const { deps, t } = await setup([broad, draft(["RA", "RB", "RC", "RD"]), analysis("trucks", "Buy the truckers."), draft(["TA", "TB", "TC", "TD"]), alignment, drivers, fidA, fidB], undefined, [news]);
+    const r = await compare(deps, postA, postB);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    if (!r.ok) return;
+    const a = r.value.sides[0]!;
+    // The model's own default stands, and the draft uses the ordinary prompt.
+    assert.equal(a.analysis.default_interpretation, "i1");
+    assert.equal(a.model_default, null);
+    assert.equal(a.versions.draft, "draft-v1");
+    assert.deepEqual(a.voice, news);
+    assert.ok(r.value.caveats.some((c) => c.startsWith("Post A reports news without a view of its own.")));
+    assert.ok(!r.value.caveats.some((c) => c.startsWith("Post B reports news")));
+    assert.equal(t.voiceRequests.length, 2, "each side classified once");
+  });
+
+  it("names the poster's commentary on news, and carries on with a caveat when classification fails", async () => {
+    const commented = { voice: "news_with_commentary", commentary: "Buy the truckers.", reason: "Headline plus a view." };
+    const { deps } = await setup(happy, undefined, [new Error("overloaded"), commented]);
+    const r = await compare(deps, postA, postB);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    if (!r.ok) return;
+    assert.equal(r.value.sides[0]!.voice, null);
+    assert.ok(r.value.caveats.some((c) => /^Whether post A states the poster's own view couldn't be determined/.test(c)));
+    assert.ok(r.value.caveats.some((c) => c.includes('adds the poster\'s own reading ("Buy the truckers.")')));
   });
 });
 

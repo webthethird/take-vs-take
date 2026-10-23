@@ -79,9 +79,10 @@ function print(rep: ComparisonReport) {
     const interp = an.interpretations.find((i) => i.id === an.default_interpretation);
     console.log(`\n--- Post ${s.label}: @${s.post.author_handle}, ${s.post.created_at.slice(0, 10)}  ${s.post.url}`);
     console.log(`  status: ${an.status}  [${an.direction}]  ${an.status_reason}`);
+    if (s.voice && s.voice.voice !== "own_view") console.log(`  voice: ${s.voice.voice}${s.voice.commentary ? ` ("${s.voice.commentary}")` : ""}`);
     console.log(`  claim: ${an.economic_claim}`);
     if (an.targets.length) console.log(`  post's own targets: ${an.targets.map((t) => `${t.ticker} ${t.stance === "negative" ? "−" : "+"}`).join(", ")}`);
-    if (interp) console.log(`  built: "${interp.label}"${authorNamed(an, interp) ? " (author named these)" : " (AI-inferred)"}. Gap: ${interp.gap_note}`);
+    if (interp) console.log(`  built: "${interp.label}"${authorNamed(an, interp, s.voice) ? " (author named these)" : " (AI-inferred)"}. Gap: ${interp.gap_note}`);
     const others = an.interpretations.filter((i) => i.id !== an.default_interpretation);
     if (others.length) console.log(`  other readings not built: ${others.map((i) => i.label).join("; ")}`);
     const p = s.portfolio;

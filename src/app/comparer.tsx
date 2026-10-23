@@ -15,8 +15,10 @@ const COLORS = { A: "#2563eb", B: "#d97706", SPY: "#6b7280" };
 
 const STAGES: { key: string; label: string }[] = [
   { key: "analyze:A", label: "Read post A" },
+  { key: "voice:A", label: "Check whose view post A states" },
   { key: "draft:A", label: "Build portfolio A" },
   { key: "analyze:B", label: "Read post B" },
+  { key: "voice:B", label: "Check whose view post B states" },
   { key: "draft:B", label: "Build portfolio B" },
   { key: "frozen", label: "Freeze both portfolios" },
   { key: "align", label: "Compare the opinions" },
@@ -278,10 +280,11 @@ function Summary({ report }: { report: ReportView }) {
               <span className="muted"> · {s.post.created_at.slice(0, 10)}</span>
             </p>
             <p>
+              {claimFor(s.voice).tag && <span className="tag news">{claimFor(s.voice).tag}</span>}{" "}
               <span className={`tag ${s.analysis.direction}`}>{s.analysis.direction}</span> {s.analysis.economic_claim}
             </p>
             {!s.portfolio && <p className="muted small">No portfolio: {words(s.analysis.status)}.</p>}
-            {s.portfolio && <FidelityLine f={report.fidelity?.[s.label] ?? null} />}
+            {s.portfolio && <FidelityLine f={report.fidelity?.[s.label] ?? null} voice={s.voice} />}
           </div>
         ))}
       </div>
@@ -346,11 +349,27 @@ const LINKS: { key: FidelityLink; label: string; title: string }[] = [
   { key: "added", label: "added", title: "Exposure the claim doesn't call for." },
 ];
 
+type Voice = FrozenRun["voice"] | undefined;
+
+/// In a post that only reports news, a company it names is the news, not the
+/// poster's pick.
+function linksFor(voice: Voice) {
+  if (voice?.voice !== "news_only") return LINKS;
+  return LINKS.map((l) => (l.key === "named" ? { ...l, label: "named in the news", title: "The news the post reports names this company or security; the poster didn't pick it." } : l));
+}
+
+/// The claim's heading, and a tag saying whose view it is.
+function claimFor(voice: Voice): { heading: string; tag: string | null } {
+  if (voice?.voice === "news_only") return { heading: "What the news implies (AI reading)", tag: "news report" };
+  if (voice?.voice === "news_with_commentary") return { heading: "What the post claims", tag: "news + the poster's reading" };
+  return { heading: "What the post claims", tag: null };
+}
+
 /// How the invested weight splits by fidelity label, and what the portfolio
 /// can only approximate. The labels are the model's; the percentages are sums.
-function FidelityLine({ f }: { f: FidelityResult | null }) {
+function FidelityLine({ f, voice }: { f: FidelityResult | null; voice: Voice }) {
   if (!f) return <p className="muted small">Fidelity labels unavailable.</p>;
-  const parts = LINKS.filter((l) => f.shares[l.key] > 0).map((l) => `${Math.round(f.shares[l.key] * 100)}% ${l.label}`);
+  const parts = linksFor(voice).filter((l) => f.shares[l.key] > 0).map((l) => `${Math.round(f.shares[l.key] * 100)}% ${l.label}`);
   return (
     <div className="fidelity small">
       <p>
@@ -403,7 +422,13 @@ function SideCard({ side, post, color, ret, fidelity }: { side: FrozenRun; post:
       {shownNote(post.shown) && <p className="muted small">{shownNote(post.shown)}</p>}
       {side.post.attachments.length > 0 && <p className="muted small">The post includes {side.post.attachments.join(" and ")} the model could not see.</p>}
 
-      <h3>What the post claims</h3>
+      <h3>{claimFor(side.voice).heading}</h3>
+      {side.voice?.voice === "news_with_commentary" && side.voice.commentary && (
+        <p className="small">
+          The poster&apos;s own reading of the news: &ldquo;{side.voice.commentary}&rdquo;
+        </p>
+      )}
+      {side.voice?.voice === "news_only" && <p className="muted small">This post reports news and adds no view of its own. What follows is the AI&apos;s reading of what the news implies, not the poster&apos;s opinion.</p>}
       <p>
         <span className={`tag ${an.direction}`}>{an.direction}</span> {an.economic_claim}
       </p>
@@ -418,7 +443,7 @@ function SideCard({ side, post, color, ret, fidelity }: { side: FrozenRun; post:
         <>
           <h3>How it was turned into a portfolio</h3>
           <p>
-            <strong>{reading.label}</strong> <span className="tag">{authorNamed(an, reading) ? "the post names these" : "AI-inferred"}</span>
+            <strong>{reading.label}</strong> <span className="tag">{authorNamed(an, reading, side.voice) ? "the post names these" : "AI-inferred"}</span>
           </p>
           {reading.gap_note && <p className="muted small">Beyond the post: {reading.gap_note}</p>}
           {side.model_default && (
@@ -431,7 +456,7 @@ function SideCard({ side, post, color, ret, fidelity }: { side: FrozenRun; post:
           <table className="holdings">
             <tbody>
               {p.buckets.map((bk) => (
-                <BucketRows key={bk.name} bucket={bk} positions={p.positions.filter((x) => x.bucket === bk.name)} fidelity={fidelity} />
+                <BucketRows key={bk.name} bucket={bk} positions={p.positions.filter((x) => x.bucket === bk.name)} fidelity={fidelity} voice={side.voice} />
               ))}
               <tr className="cash">
                 <td>Cash</td>
@@ -455,10 +480,12 @@ function BucketRows({
   bucket,
   positions,
   fidelity,
+  voice,
 }: {
   bucket: { name: string; weight: number };
   positions: { ticker: string; weight: number; role: string }[];
   fidelity: FidelityResult | null;
+  voice: Voice;
 }) {
   const labelOf = (t: string) => fidelity?.value.holdings.find((h) => tickerKey(h.ticker) === tickerKey(t));
   return (
@@ -474,7 +501,7 @@ function BucketRows({
             {x.role}
             {(() => {
               const l = labelOf(x.ticker);
-              const meta = l && LINKS.find((k) => k.key === l.link);
+              const meta = l && linksFor(voice).find((k) => k.key === l.link);
               return meta ? (
                 <>
                   {" "}

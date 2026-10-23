@@ -28,7 +28,9 @@ import {
   analyzeThesis,
   draftPortfolio,
   priceTickerCheck,
+  classifyVoice,
   renderPost,
+  VOICE_PROMPT_VERSION,
   showsMedia,
   withText,
   type Attempt,
@@ -48,7 +50,7 @@ import {
 } from "./overlap.js";
 import { LookAheadGate, etDate, type PriceSeries, type PriceSource } from "./prices.js";
 import { err, type Result } from "./result.js";
-import { Fidelity, SharedDrivers, ThesisAlignment, type FidelityLink, type PostInput, type ThesisAnalysis } from "./schema.js";
+import { Fidelity, SharedDrivers, ThesisAlignment, type FidelityLink, type PostInput, type PostVoice, type ThesisAnalysis } from "./schema.js";
 import { WEIGHT_RULE_VERSION, type Portfolio } from "./weights.js";
 import { authorNamed } from "./readings.js";
 import { companyKey, tickerKey } from "./ticker.js";
@@ -62,7 +64,7 @@ export const DRIVERS_PROMPT_VERSION = "drivers-v1";
 /// flipped it), so the step samples several and reports how they split.
 export const DRIVERS_SAMPLES = 3;
 export const FIDELITY_PROMPT_VERSION = "fidelity-v1";
-export const DEFAULT_RULE_VERSION = "default-v2";
+export const DEFAULT_RULE_VERSION = "default-v3";
 
 // ── Thesis alignment ─────────────────────────────────────────────────────
 
@@ -122,10 +124,10 @@ cash  ${p.cash_weight}%
 // it covers less of the claim, over a broader one built from stand-ins. The
 // model's own choice is kept (and drafted, when alternates are on).
 
-export function pickDefault(a: ThesisAnalysis): string | null {
+export function pickDefault(a: ThesisAnalysis, voice: PostVoice | null = null): string | null {
   const chosen = a.interpretations.find((i) => i.id === a.default_interpretation);
-  if (!chosen || authorNamed(a, chosen)) return a.default_interpretation;
-  return a.interpretations.find((i) => authorNamed(a, i))?.id ?? a.default_interpretation;
+  if (!chosen || authorNamed(a, chosen, voice)) return a.default_interpretation;
+  return a.interpretations.find((i) => authorNamed(a, i, voice))?.id ?? a.default_interpretation;
 }
 
 // ── Fidelity ─────────────────────────────────────────────────────────────
@@ -148,18 +150,18 @@ Then list the parts of the claim the portfolio can only approximate or leave out
 /// Shown what the analysis was shown: a post with context or images gets the
 /// same rendering, images included. A text-only post keeps its original,
 /// cached form.
-function renderForFidelity(post: PostInput, analysis: ThesisAnalysis, p: Portfolio): Rendered {
+function renderForFidelity(post: PostInput, analysis: ThesisAnalysis, p: Portfolio, voice: PostVoice | null): Rendered {
   const input = toThesisInput(post);
-  const rest = fidelityDetails(analysis, p);
+  const rest = fidelityDetails(analysis, p, voice);
   if (!showsMedia(input) && input.context.length === 0) return `<post>\n${post.text}\n</post>\n${rest}`;
   return withText(renderPost(input), rest);
 }
 
-function fidelityDetails(analysis: ThesisAnalysis, p: Portfolio): string {
+function fidelityDetails(analysis: ThesisAnalysis, p: Portfolio, voice: PostVoice | null): string {
   const reading = analysis.interpretations.find((i) => i.id === p.interpretation_id);
   const rows = p.positions.map((x) => `${x.ticker}  ${x.weight}%  ${x.role}: ${x.rationale}`);
   return `<analysis>${JSON.stringify({ economic_claim: analysis.economic_claim, direction: analysis.direction, targets: analysis.targets })}</analysis>
-<reading>${JSON.stringify(reading ? { label: reading.label, expression: reading.expression, author_stated: authorNamed(analysis, reading), gap_note: reading.gap_note } : null)}</reading>
+<reading>${JSON.stringify(reading ? { label: reading.label, expression: reading.expression, author_stated: authorNamed(analysis, reading, voice), gap_note: reading.gap_note } : null)}</reading>
 <holdings>
 ${rows.join("\n")}
 cash  ${p.cash_weight}%
@@ -217,6 +219,10 @@ export type Side = {
   attempts: Attempt[];
   /// The model's choice of default, when pickDefault overrode it.
   model_default: string | null;
+  /// Whose view the post states. Null if that couldn't be determined (the
+  /// comparison goes on, with a caveat). Absent in runs frozen before voice-v1.
+  voice: PostVoice | null;
+  voice_error?: string;
 };
 
 export type FrozenRun = Side & {
@@ -312,7 +318,7 @@ export type CompareDeps = {
 
 /// Progress, for a UI. Purely informational: nothing depends on it.
 export type Stage =
-  | { stage: "analyze" | "draft" | "fidelity"; side: "A" | "B" }
+  | { stage: "analyze" | "voice" | "draft" | "fidelity"; side: "A" | "B" }
   | { stage: "frozen" | "align" | "drivers" | "prices" | "backtest" };
 
 const shift = (d: string, days: number) => new Date(Date.parse(`${d}T12:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
@@ -333,6 +339,20 @@ export function llmFor(cfg: LlmConfig, ...posts: Pick<PostInput, "provenance">[]
   return posts.some((p) => p.provenance.source === "x_api") ? { ...cfg, cacheMaxAgeDays: X_CACHE_MAX_AGE_DAYS } : cfg;
 }
 
+/// What a reader must know about whose view a side is.
+export function voiceCaveat(side: Pick<Side, "label" | "voice" | "voice_error">): string[] {
+  const v = side.voice;
+  if (v === undefined) return [];
+  if (v === null) return [`Whether post ${side.label} states the poster's own view couldn't be determined (${side.voice_error ?? "unknown error"}); it is treated as their view.`];
+  if (v.voice === "news_only") {
+    return [`Post ${side.label} reports news without a view of its own. Its claim and portfolio are the AI's reading of what the news implies, not the poster's opinion, and the opinion comparison treats it the same way.`];
+  }
+  if (v.voice === "news_with_commentary") {
+    return [`Post ${side.label} reports news and adds the poster's own reading ("${v.commentary}"). That reading is treated as the poster's view; the news itself is not.`];
+  }
+  return [];
+}
+
 export async function buildSide(
   deps: CompareDeps,
   gate: LookAheadGate,
@@ -346,31 +366,37 @@ export async function buildSide(
   deps.onStage?.({ stage: "analyze", side: label });
   const a = await analyzeThesis(llm, input, { nonce });
   if (!a.ok) return { ...err("analysis_failed", `Side ${label}: ${a.error}: ${a.message}`), cause: a.error, attempts: a.attempts };
-  const chosen = pickDefault(a.value.analysis);
+  // Whose view this is, before drafting: a post that only reports news
+  // never counts as its author naming what to own.
+  deps.onStage?.({ stage: "voice", side: label });
+  const v = await classifyVoice(llm, input, { nonce });
+  const voice = v.ok ? v.value.voice : null;
+  const voice_error = v.ok ? undefined : `${v.error}: ${v.message}`;
+  const chosen = pickDefault(a.value.analysis, voice);
   const model_default = chosen === a.value.analysis.default_interpretation ? null : a.value.analysis.default_interpretation;
   const analysis = model_default ? { ...a.value.analysis, default_interpretation: chosen } : a.value.analysis;
   const keep = { post_id: post.post_id, url: post.url, author_handle: post.author_handle, created_at: post.created_at, attachments: post.attachments, provenance: post.provenance };
   if (analysis.status !== "investable" || !analysis.default_interpretation) {
-    return { ok: true, value: { label, post: keep, analysis, portfolio: null, alternates: [], attempts: a.attempts, model_default } };
+    return { ok: true, value: { label, post: keep, analysis, portfolio: null, alternates: [], attempts: [...a.attempts, ...v.attempts], model_default, voice, voice_error } };
   }
   const asOf = new Date(post.created_at);
   const check = priceTickerCheck(gate, asOf);
   deps.onStage?.({ stage: "draft", side: label });
-  const d = await draftPortfolio(llm, input, analysis, analysis.default_interpretation, check, { nonce });
-  if (!d.ok) return { ...err("draft_failed", `Side ${label}: ${d.error}: ${d.message}`), cause: d.error, attempts: [...a.attempts, ...d.attempts] };
-  const attempts = [...a.attempts, ...d.attempts];
+  const d = await draftPortfolio(llm, input, analysis, analysis.default_interpretation, check, { nonce, voice });
+  if (!d.ok) return { ...err("draft_failed", `Side ${label}: ${d.error}: ${d.message}`), cause: d.error, attempts: [...a.attempts, ...v.attempts, ...d.attempts] };
+  const attempts = [...a.attempts, ...v.attempts, ...d.attempts];
 
   // Every other reading, drafted now, so all are frozen together.
   const alternates: Alternate[] = [];
   if (deps.alternates ?? false) {
     for (const i of analysis.interpretations) {
       if (i.id === analysis.default_interpretation) continue;
-      const x = await draftPortfolio(llm, input, analysis, i.id, check, { nonce });
+      const x = await draftPortfolio(llm, input, analysis, i.id, check, { nonce, voice });
       attempts.push(...x.attempts);
       alternates.push(x.ok ? { interpretation_id: i.id, portfolio: x.value.portfolio, error: null } : { interpretation_id: i.id, portfolio: null, error: `${x.error}: ${x.message}` });
     }
   }
-  return { ok: true, value: { label, post: keep, analysis, portfolio: d.value.portfolio, alternates, attempts, model_default } };
+  return { ok: true, value: { label, post: keep, analysis, portfolio: d.value.portfolio, alternates, attempts, model_default, voice, voice_error } };
 }
 
 export function freeze(side: Side, now: Date): FrozenRun {
@@ -381,9 +407,10 @@ export function freeze(side: Side, now: Date): FrozenRun {
     draft: side.attempts.find((x) => x.prompt_version.startsWith("draft"))?.prompt_version ?? DRAFT_PROMPT_VERSION,
     weights: WEIGHT_RULE_VERSION,
     default_rule: DEFAULT_RULE_VERSION,
+    voice: VOICE_PROMPT_VERSION,
     model: side.attempts[0]?.model_requested ?? "unknown",
   };
-  const body = { post_id: side.post.post_id, analysis: side.analysis, portfolio: side.portfolio, alternates: side.alternates, versions };
+  const body = { post_id: side.post.post_id, analysis: side.analysis, voice: side.voice, portfolio: side.portfolio, alternates: side.alternates, versions };
   const run_id = createHash("sha256").update(JSON.stringify(body)).digest("hex").slice(0, 16);
   return { ...side, run_id, frozen_at: now.toISOString(), versions };
 }
@@ -469,7 +496,7 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
       promptVersion: FIDELITY_PROMPT_VERSION,
       system: FIDELITY_SYSTEM,
       schema: Fidelity,
-      messages: [{ role: "user", content: renderForFidelity(post, f.analysis, f.portfolio) }],
+      messages: [{ role: "user", content: renderForFidelity(post, f.analysis, f.portfolio, f.voice ?? null) }],
     });
     if (r.ok) fidelityCost += r.value.meta.cost_usd;
     const shares = r.ok ? fidelityShares(r.value.value, f.portfolio) : r;
@@ -481,6 +508,7 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
     [...fa.attempts, ...fb.attempts].reduce((s, x) => s + x.cost_usd, 0) + (alignment?.cost_usd ?? 0) + (drivers?.cost_usd ?? 0) + fidelityCost;
   const caveats: string[] = [
     "Hypothetical, AI-generated interpretations of public posts. The authors did not choose, hold or endorse these portfolios. Not investment advice.",
+    ...frozen.flatMap((f) => voiceCaveat(f)),
   ];
   const report: ComparisonReport = {
     comparison_id,
@@ -617,7 +645,7 @@ export function sensitivity(fa: FrozenRun, fb: FrozenRun, series: PriceSeries[],
         interpretation_id: r.id,
         label: i.label,
         is_default: r.id === f.analysis.default_interpretation,
-        author_stated: authorNamed(f.analysis, i),
+        author_stated: authorNamed(f.analysis, i, f.voice),
         stance_conflicts: stanceConflicts(f.analysis, r.portfolio),
         metrics: b.ok ? b.value.metrics : null,
         error: b.ok ? null : `${b.error}: ${b.message}`,

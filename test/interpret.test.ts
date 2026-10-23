@@ -15,7 +15,10 @@ import {
   analyzeThesis,
   draftPortfolio,
   priceTickerCheck,
+  VOICE_SYSTEM,
+  classifyVoice,
   renderPost,
+  voiceProblems,
   type TickerCheck,
 } from "../src/lib/interpret.js";
 import type { LlmConfig } from "../src/lib/llm.js";
@@ -358,5 +361,27 @@ describe("posts with images and links", () => {
     assert.ok(Array.isArray(content));
     assert.match((content[0] as { text: string }).text, /<interpretation_to_build>/);
     assert.equal(content.filter((b) => b.type === "image").length, 2);
+  });
+});
+
+describe("classifyVoice", () => {
+  const v = (voice: string, commentary: string | null) => ({ voice, commentary, reason: "" }) as Parameters<typeof voiceProblems>[0];
+
+  it("requires commentary, quoted verbatim, exactly when the post adds a view to news", () => {
+    assert.deepEqual(voiceProblems(v("own_view", null), input), []);
+    assert.deepEqual(voiceProblems(v("news_only", null), input), []);
+    assert.deepEqual(voiceProblems(v("news_with_commentary", "Buy the railroads."), input), []);
+    assert.equal(voiceProblems(v("news_with_commentary", null), input).length, 1);
+    assert.match(voiceProblems(v("news_with_commentary", "Sell the railroads."), input)[0]!, /not a verbatim passage/);
+    assert.equal(voiceProblems(v("news_only", "Buy the railroads."), input).length, 1);
+  });
+
+  it("sends the text only, never the images", async () => {
+    const { cfg, t } = await cfgWith([{ voice: "own_view", commentary: null, reason: "States a view." }]);
+    const withImage = ThesisInput.parse({ ...input, media: [{ from: "post", kind: "photo", url: "https://pbs.twimg.com/media/a.jpg", alt_text: null }] });
+    const r = await classifyVoice(cfg, withImage);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    assert.equal(t.requests[0]!.system, VOICE_SYSTEM);
+    assert.equal(typeof t.requests[0]!.messages[0]!.content, "string");
   });
 });

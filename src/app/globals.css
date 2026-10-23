@@ -77,6 +77,7 @@ blockquote {
   margin: 12px 0 4px; padding: 10px 12px; background: var(--tag); border-radius: 6px;
   white-space: pre-wrap; font-size: 14px; max-height: 220px; overflow: auto;
 }
+.tag.news { border-style: dashed; }
 blockquote.context { margin-bottom: 0; font-size: 13px; color: var(--muted); max-height: 140px; }
 .tag { display: inline-block; font-size: 12px; padding: 1px 7px; border-radius: 999px; background: var(--tag); border: 1px solid var(--line); }
 .tag.bullish { color: #15803d; }

@@ -8,7 +8,7 @@ import { consistencyFindings, sampleNonce, selfConsistency, type ConsistencyRepo
 import type { LlmConfig, ModelResponse } from "../src/lib/llm.js";
 import { fixtureSource, type PriceBar, type PriceSource } from "../src/lib/prices.js";
 import { PostInput, type Fidelity, type PortfolioDraft, type SharedDrivers, type ThesisAlignment, type ThesisAnalysis } from "../src/lib/schema.js";
-import { scripted } from "./llm.test.js";
+import { scripted, withVoice } from "./llm.test.js";
 
 // Same synthetic world as compare.test.ts: R* ride the market (β 1.2),
 // T* lean against it (β -0.5), F* sit in between.
@@ -88,7 +88,7 @@ after(async () => {
 async function setup(responses: (Partial<ModelResponse> | Error)[]) {
   const d = await mkdtemp(join(tmpdir(), "tvt-sc-"));
   dirs.push(d);
-  const t = scripted(responses);
+  const t = withVoice(scripted(responses));
   const llm: LlmConfig = { transport: t, budgetUsd: 5, cacheDir: join(d, "llm"), ledgerPath: join(d, "ledger.jsonl") };
   const reads: { ticker: string; end: string }[] = [];
   const base = fixtureSource(data);

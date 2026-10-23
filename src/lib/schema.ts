@@ -187,6 +187,25 @@ export const ThesisAnalysis = z.object({
 });
 export type ThesisAnalysis = z.infer<typeof ThesisAnalysis>;
 
+// ── Voice (LLM, per post, before drafting) ───────────────────────────────
+
+/// Whose view a post states. News relays are common (and a product direction
+/// elsewhere), so they aren't abstained on; they're labeled, so a reader
+/// never mistakes the AI's reading of a headline for the poster's opinion.
+export const PostVoice = z.object({
+  voice: z
+    .enum(["own_view", "news_with_commentary", "news_only"])
+    .describe(
+      "own_view: the poster argues or states their own view. news_with_commentary: the post reports news and adds the poster's own reading of it. news_only: the post reports news, prices or someone else's statement and adds no view of its own.",
+    ),
+  commentary: z
+    .string()
+    .nullable()
+    .describe("For news_with_commentary only: the poster's own reading, quoted verbatim from the post as one continuous passage. Null otherwise."),
+  reason: z.string().describe("One sentence on why."),
+});
+export type PostVoice = z.infer<typeof PostVoice>;
+
 // ── Thesis alignment (LLM, after both portfolios are frozen) ─────────────
 //
 // About the opinions, not the portfolios. Must not cite correlation or
