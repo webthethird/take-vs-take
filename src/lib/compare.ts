@@ -37,7 +37,8 @@ import {
   type Rendered,
 } from "./interpret.js";
 import { structuredCall, type LlmConfig } from "./llm.js";
-import { X_CACHE_MAX_AGE_DAYS } from "./x.js";
+import { sweepRuns } from "./runs.js";
+import { xExpiry } from "./x.js";
 import {
   OVERLAP_VERSION,
   coMovementDirection,
@@ -332,11 +333,12 @@ export type SideResult =
   | { ok: true; value: Side }
   | { ok: false; error: CompareError; message: string; cause: string; attempts: Attempt[] };
 
-/// Model calls carrying content fetched from X are cached only as long as
-/// the X responses themselves (X_CACHE_MAX_AGE_DAYS); calls on saved
-/// fixtures keep their cache indefinitely.
+/// Model calls carrying content fetched from X are cached only until 30
+/// days after that fetch (xExpiry); calls on saved fixtures keep their cache
+/// indefinitely.
 export function llmFor(cfg: LlmConfig, ...posts: Pick<PostInput, "provenance">[]): LlmConfig {
-  return posts.some((p) => p.provenance.source === "x_api") ? { ...cfg, cacheMaxAgeDays: X_CACHE_MAX_AGE_DAYS } : cfg;
+  const expires = xExpiry(posts);
+  return expires ? { ...cfg, cacheExpiresAt: expires } : cfg;
 }
 
 /// What a reader must know about whose view a side is.
@@ -421,6 +423,7 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
   const gate = new LookAheadGate(deps.prices, cutoff);
   const comparison_id = createHash("sha256").update(`${postA.post_id}|${postB.post_id}`).digest("hex").slice(0, 12);
   const dir = join(deps.outDir, `compare-${comparison_id}`);
+  await sweepRuns(deps.outDir, now());
   await mkdir(dir, { recursive: true });
 
   // 1. Independent sides. Sequential, but neither sees the other.

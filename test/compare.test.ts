@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -137,7 +137,23 @@ describe("compare", () => {
     const files = async (d: string) => (await readdir(d)).filter((f) => f.endsWith(".json"));
     // A (a saved fixture): analysis, voice, draft, fidelity. B and everything joint: those four, alignment, drivers.
     assert.equal((await files(deps.llm.cacheDir)).length, 4);
-    assert.equal((await files(join(deps.llm.cacheDir, "expiring"))).length, 6);
+    const expiring = await files(join(deps.llm.cacheDir, "expiring"));
+    assert.equal(expiring.length, 6);
+    // 30 days from the X fetch, not from the call.
+    for (const f of expiring) {
+      assert.equal(JSON.parse(await readFile(join(deps.llm.cacheDir, "expiring", f), "utf8")).expires_at, "2026-11-18T00:00:00.000Z");
+    }
+  });
+
+  it("deletes saved runs of X posts once their 30 days are up", async () => {
+    const { deps } = await setup(happy);
+    const stale = join(deps.outDir, "compare-stale");
+    await mkdir(stale, { recursive: true });
+    await writeFile(join(stale, "frozen-b.json"), JSON.stringify({ post: { provenance: { source: "x_api", text_verified: true, retrieved_at: "2026-09-01T00:00:00.000Z" } } }));
+    const fromX = { ...postB, provenance: { source: "x_api" as const, text_verified: true, retrieved_at: "2026-10-05T00:00:00.000Z" } };
+    const r = await compare({ ...deps, now: () => new Date("2026-10-05T00:00:00Z") }, postA, fromX);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    assert.deepEqual(await readdir(deps.outDir), [`compare-${r.value.comparison_id}`], "the stale run is gone; the new one stays");
   });
 
   it("runs the full pipeline: freeze first, then outcomes", async () => {

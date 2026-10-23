@@ -166,6 +166,20 @@ describe("XCache", () => {
     assert.deepEqual(await readdir(dir), []);
   });
 
+  it("dates a post from a cache hit by its original fetch, so the 30-day clock doesn't restart", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tvt-x-"));
+    let now = new Date("2026-10-01T00:00:00Z");
+    const cache = new XCache(dir, () => now);
+    const body: XResponse = { data: [{ id: MAIN, author_id: "u1", text: "A" }], includes: { users: [user] } };
+    const client = xClient({ token: "t", fetch: respond([body]).fetch, cache, sleep: noSleep });
+    now = new Date("2026-10-01T00:00:00Z");
+    await fetchPosts(client, [MAIN], () => now);
+    now = new Date("2026-10-20T00:00:00Z");
+    const r = await fetchPosts(client, [MAIN], () => now);
+    assert.ok(r.ok);
+    if (r.ok) assert.equal(r.value[0]!.provenance.retrieved_at, "2026-10-01T00:00:00.000Z");
+  });
+
   it("sweeps expired and unreadable entries nobody asks for again", async () => {
     const dir = await mkdtemp(join(tmpdir(), "tvt-x-"));
     await writeFile(join(dir, "old.json"), JSON.stringify({ fetched_at: "2026-01-01T00:00:00Z", response: {} }));

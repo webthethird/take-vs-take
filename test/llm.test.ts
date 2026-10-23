@@ -241,7 +241,7 @@ describe("expiring cache entries", () => {
     const t = scripted([{ parsed: { answer: "first" } }, { parsed: { answer: "second" } }]);
     const base = await config(t);
     let now = new Date("2026-10-01T00:00:00Z");
-    const cfg = { ...base, cacheMaxAgeDays: 30, now: () => now };
+    const cfg = { ...base, cacheExpiresAt: new Date("2026-10-31T00:00:00Z"), now: () => now };
     assert.ok((await structuredCall(cfg, spec)).ok);
     assert.equal((await readdir(join(cfg.cacheDir, EXPIRING_DIR))).length, 1);
 
@@ -259,7 +259,7 @@ describe("expiring cache entries", () => {
     const t = scripted([{ parsed: { answer: "x" } }, { parsed: { answer: "y" } }]);
     const base = await config(t);
     await structuredCall({ ...base, now: () => new Date("2026-01-01T00:00:00Z") }, spec);
-    await structuredCall({ ...base, cacheMaxAgeDays: 30, now: () => new Date("2026-01-01T00:00:00Z") }, { ...spec, system: "other" });
+    await structuredCall({ ...base, cacheExpiresAt: new Date("2026-01-31T00:00:00Z"), now: () => new Date("2026-01-01T00:00:00Z") }, { ...spec, system: "other" });
     assert.equal(await sweepLlmCache(base.cacheDir, new Date("2026-01-15T00:00:00Z")), 0);
     assert.equal(await sweepLlmCache(base.cacheDir, new Date("2026-02-01T00:00:00Z")), 1);
     assert.deepEqual(await readdir(join(base.cacheDir, EXPIRING_DIR)), []);

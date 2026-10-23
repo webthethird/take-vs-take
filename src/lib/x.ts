@@ -25,6 +25,13 @@ import { PostInput, type PostContext, type PostLink, type PostMedia } from "./sc
 export const X_API = "https://api.x.com/2/tweets";
 export const X_CACHE_MAX_AGE_DAYS = 30;
 const DAY_MS = 86_400_000;
+
+/// When anything derived from these posts must be gone: 30 days after the
+/// earliest X fetch among them. Null if none came from X.
+export function xExpiry(posts: { provenance: { source: string; retrieved_at: string } }[]): Date | null {
+  const t = posts.filter((p) => p.provenance.source === "x_api").map((p) => Date.parse(p.provenance.retrieved_at));
+  return t.length ? new Date(Math.min(...t) + X_CACHE_MAX_AGE_DAYS * DAY_MS) : null;
+}
 /// Longest we wait on a 429 before giving up; X's reset can be 15 minutes.
 const MAX_RATE_LIMIT_WAIT_MS = 30_000;
 const TIMEOUT_MS = 15_000;
@@ -81,10 +88,10 @@ export class XCache {
     return this.now().getTime() - Date.parse(fetchedAt) < this.maxAgeDays * DAY_MS;
   }
 
-  async get(ids: string[]): Promise<XResponse | null> {
+  async get(ids: string[]): Promise<XLookup | null> {
     try {
       const e = JSON.parse(await readFile(this.path(ids), "utf8")) as { fetched_at: string; response: XResponse };
-      return this.fresh(e.fetched_at) ? e.response : null;
+      return this.fresh(e.fetched_at) ? { response: e.response, fetched_at: e.fetched_at } : null;
     } catch {
       return null;
     }
@@ -124,8 +131,13 @@ export class XCache {
 
 // ── Client ───────────────────────────────────────────────────────────────
 
+/// A lookup response, and when it was fetched from X if it came from the
+/// cache (null: fetched just now). The 30-day clock starts at the fetch, not
+/// at the cache hit.
+export type XLookup = { response: XResponse; fetched_at: string | null };
+
 export type XClient = {
-  lookup(ids: string[]): Promise<Result<XResponse, XError>>;
+  lookup(ids: string[]): Promise<Result<XLookup, XError>>;
   /// HTTP requests actually sent (cache hits excluded).
   requests: number;
 };
@@ -143,7 +155,7 @@ export function xClient(opts: {
   const client: XClient = {
     requests: 0,
     async lookup(ids) {
-      if (ids.length === 0) return { ok: true, value: {} };
+      if (ids.length === 0) return { ok: true, value: { response: {}, fetched_at: null } };
       if (opts.cache) {
         await opts.cache.sweep();
         const hit = await opts.cache.get(ids);
@@ -191,7 +203,7 @@ export function xClient(opts: {
           return err("invalid_response", "X API returned a body that isn't JSON.");
         }
         if (opts.cache) await opts.cache.put(ids, body);
-        return { ok: true, value: body };
+        return { ok: true, value: { response: body, fetched_at: null } };
       }
     },
   };
@@ -207,8 +219,9 @@ export async function fetchPosts(
   ids: string[],
   now: () => Date = () => new Date(),
 ): Promise<Result<PostInput[], XError> & { index?: number }> {
-  const main = await client.lookup(ids);
-  if (!main.ok) return main;
+  const mainLookup = await client.lookup(ids);
+  if (!mainLookup.ok) return mainLookup;
+  const main = { value: mainLookup.value.response };
   const posts = new Map((main.value.data ?? []).map((p) => [p.id, p]));
 
   for (const [index, id] of ids.entries()) {
@@ -220,12 +233,16 @@ export async function fetchPosts(
   }
 
   const refIds = [...new Set(ids.flatMap((id) => (posts.get(id)!.referenced_posts ?? []).map((r) => r.id)))].filter((r) => !posts.has(r));
-  const refs = await client.lookup(refIds);
-  if (!refs.ok) return refs;
+  const refsLookup = await client.lookup(refIds);
+  if (!refsLookup.ok) return refsLookup;
+  const refs = { value: refsLookup.value.response };
   const refPosts = new Map((refs.value.data ?? []).map((p) => [p.id, p]));
   const media = new Map([...(main.value.includes?.media ?? []), ...(refs.value.includes?.media ?? [])].map((m) => [m.media_key, m]));
   const users = new Map((main.value.includes?.users ?? []).map((u) => [u.id, u]));
-  const retrieved_at = now().toISOString();
+  // The earliest fetch whose content the post carries: anything kept from it
+  // (saved runs, model-cache entries) expires 30 days after that.
+  const fetchedAt = [mainLookup.value.fetched_at, refsLookup.value.fetched_at, now().toISOString()].filter((t): t is string => t !== null);
+  const retrieved_at = new Date(Math.min(...fetchedAt.map(Date.parse))).toISOString();
 
   const out: PostInput[] = [];
   for (const [index, id] of ids.entries()) {

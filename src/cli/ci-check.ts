@@ -16,6 +16,7 @@ import { blockBootstrapIntervals } from "../lib/bootstrap.js";
 import type { ComparisonReport } from "../lib/compare.js";
 import { coMovementDirection, exAnteReturns, fisherInterval, pearson, regress, type Interval } from "../lib/overlap.js";
 import { etDate, type PriceSeries } from "../lib/prices.js";
+import { sweepRuns } from "../lib/runs.js";
 import { tiingoFromEnv } from "../lib/tiingo.js";
 
 const BLOCKS = [1, 5, 10, 20];
@@ -48,6 +49,8 @@ const check = (label: string, r: number | null, n: number, ra: number[], rb: num
   }
 };
 
+// Expired runs of X posts aren't read, and are deleted.
+await sweepRuns(RUNS);
 let runs: string[];
 try {
   runs = (await readdir(RUNS)).filter((d) => d.startsWith("compare-")).sort();

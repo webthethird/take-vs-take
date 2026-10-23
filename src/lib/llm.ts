@@ -176,11 +176,11 @@ export type LlmConfig = {
   ledgerPath: string;
   model?: string;
   now?: () => Date;
-  /// Cache entries written under this config expire after this many days and
-  /// are then deleted. Set for calls carrying content fetched from X, which
-  /// may be kept only as long as the X responses themselves. Unset, entries
-  /// never expire.
-  cacheMaxAgeDays?: number;
+  /// Cache entries written under this config expire at this time and are
+  /// then deleted. Set for calls carrying content fetched from X, which may
+  /// be kept only 30 days from its fetch (see xExpiry). Unset, entries never
+  /// expire.
+  cacheExpiresAt?: Date;
 };
 
 export type CallSpec<S extends z.ZodType> = {
@@ -257,7 +257,7 @@ export async function structuredCall<S extends z.ZodType>(
   const key = createHash("sha256")
     .update(JSON.stringify([model, spec.promptVersion, spec.system, spec.messages, effort, maxTokens, spec.nonce ?? null]))
     .digest("hex");
-  const expiring = cfg.cacheMaxAgeDays !== undefined;
+  const expiring = cfg.cacheExpiresAt !== undefined;
   const cachePath = expiring ? join(cfg.cacheDir, EXPIRING_DIR, `${key}.json`) : join(cfg.cacheDir, `${key}.json`);
   if (expiring && now().getTime() - (lastSweep.get(cfg.cacheDir) ?? -Infinity) >= 86_400_000) {
     lastSweep.set(cfg.cacheDir, now().getTime());
@@ -343,7 +343,7 @@ export async function structuredCall<S extends z.ZodType>(
       created_at: now().toISOString(),
       model_requested: model,
       prompt_version: spec.promptVersion,
-      ...(expiring ? { expires_at: new Date(now().getTime() + cfg.cacheMaxAgeDays! * 86_400_000).toISOString() } : {}),
+      ...(expiring ? { expires_at: cfg.cacheExpiresAt!.toISOString() } : {}),
     };
     await writeFile(tmp, JSON.stringify(record));
     await rename(tmp, cachePath);

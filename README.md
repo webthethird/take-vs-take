@@ -85,9 +85,12 @@ it's fetched from the X API when `X_BEARER_TOKEN` is set. A fetch looks up
 only the linked posts and the posts they quote or reply to (one level),
 with their images, video preview frames and link previews; the model sees
 those images, but never opens linked pages, which may have changed since the
-post. API responses are cached under `.cache/x`, and model responses for
-calls that carried X content under `.cache/llm/expiring`; both are deleted
-after 30 days, after which a rerun pays again.
+post. Everything kept from an X fetch is deleted 30 days after that fetch:
+the API responses (`.cache/x`), model responses for calls that carried X
+content (`.cache/llm/expiring`), and saved comparisons that include an X
+post (`.cache/runs`). A rerun after that pays again. Deletion happens when
+the app next runs, so a copy can outlive its 30 days by however long the
+app sits idle.
 
 Fixtures are hand-written JSON in `fixtures/private/` (gitignored, since
 post text belongs to its author). The model is told about their
