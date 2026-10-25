@@ -292,7 +292,10 @@ export type ComparisonReport = {
   llm_cost_usd: number;
 };
 
-export type CompareError = "analysis_failed" | "draft_failed" | "price_error" | "window_error" | "freeze_error";
+/// rate_limited: a billable call was refused (CompareDeps.llm.beforeSpend).
+/// It stops the run even in an optional step, so a refused run never
+/// freezes or saves a result missing the refused part.
+export type CompareError = "analysis_failed" | "draft_failed" | "price_error" | "window_error" | "freeze_error" | "rate_limited";
 
 export type CompareDeps = {
   llm: LlmConfig;
@@ -367,12 +370,13 @@ export async function buildSide(
   const llm = llmFor(deps.llm, post);
   deps.onStage?.({ stage: "analyze", side: label });
   const a = await analyzeThesis(llm, input, { nonce });
-  if (!a.ok) return { ...err("analysis_failed", `Side ${label}: ${a.error}: ${a.message}`), cause: a.error, attempts: a.attempts };
+  if (!a.ok) return { ...err(a.error === "rate_limited" ? "rate_limited" : "analysis_failed", `Side ${label}: ${a.error}: ${a.message}`), cause: a.error, attempts: a.attempts };
   // Whose view this is, before drafting: a post that only reports news
   // never counts as its author naming what to own.
   deps.onStage?.({ stage: "voice", side: label });
   const v = await classifyVoice(llm, input, { nonce });
   const voice = v.ok ? v.value.voice : null;
+  if (!v.ok && v.error === "rate_limited") return { ...err("rate_limited", v.message), cause: v.error, attempts: [...a.attempts, ...v.attempts] };
   const voice_error = v.ok ? undefined : `${v.error}: ${v.message}`;
   const chosen = pickDefault(a.value.analysis, voice);
   const model_default = chosen === a.value.analysis.default_interpretation ? null : a.value.analysis.default_interpretation;
@@ -385,7 +389,7 @@ export async function buildSide(
   const check = priceTickerCheck(gate, asOf);
   deps.onStage?.({ stage: "draft", side: label });
   const d = await draftPortfolio(llm, input, analysis, analysis.default_interpretation, check, { nonce, voice });
-  if (!d.ok) return { ...err("draft_failed", `Side ${label}: ${d.error}: ${d.message}`), cause: d.error, attempts: [...a.attempts, ...v.attempts, ...d.attempts] };
+  if (!d.ok) return { ...err(d.error === "rate_limited" ? "rate_limited" : "draft_failed", `Side ${label}: ${d.error}: ${d.message}`), cause: d.error, attempts: [...a.attempts, ...v.attempts, ...d.attempts] };
   const attempts = [...a.attempts, ...v.attempts, ...d.attempts];
 
   // Every other reading, drafted now, so all are frozen together.
@@ -395,6 +399,7 @@ export async function buildSide(
       if (i.id === analysis.default_interpretation) continue;
       const x = await draftPortfolio(llm, input, analysis, i.id, check, { nonce, voice });
       attempts.push(...x.attempts);
+      if (!x.ok && x.error === "rate_limited") return { ...err("rate_limited", x.message), cause: x.error, attempts };
       alternates.push(x.ok ? { interpretation_id: i.id, portfolio: x.value.portfolio, error: null } : { interpretation_id: i.id, portfolio: null, error: `${x.error}: ${x.message}` });
     }
   }
@@ -453,6 +458,7 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
     schema: ThesisAlignment,
     messages: [{ role: "user", content: `${renderForAlignment("A", postA, fa.analysis)}\n\n${renderForAlignment("B", postB, fb.analysis)}` }],
   });
+  if (!al.ok && al.error === "rate_limited") return err("rate_limited", al.message);
   if (al.ok) alignment = { value: al.value.value, cost_usd: al.value.meta.cost_usd, cached: al.value.meta.cached };
 
   // Shared drivers: also after freezing and before prices, about the holdings.
@@ -476,7 +482,8 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
       if (dr.ok) {
         cost += dr.value.meta.cost_usd;
         ok.push({ value: dr.value.value, cached: dr.value.meta.cached });
-      } else failures.push(dr.message);
+      } else if (dr.error === "rate_limited") return err("rate_limited", dr.message);
+      else failures.push(dr.message);
     }
     if (ok.length > 0) {
       const expectations = ok.map((x) => x.value.expected_daily_co_movement);
@@ -501,6 +508,7 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
       schema: Fidelity,
       messages: [{ role: "user", content: renderForFidelity(post, f.analysis, f.portfolio, f.voice ?? null) }],
     });
+    if (!r.ok && r.error === "rate_limited") return err("rate_limited", r.message);
     if (r.ok) fidelityCost += r.value.meta.cost_usd;
     const shares = r.ok ? fidelityShares(r.value.value, f.portfolio) : r;
     if (r.ok && shares.ok) fidelity[f.label] = { value: r.value.value, shares: shares.value, cost_usd: r.value.meta.cost_usd, cached: r.value.meta.cached };

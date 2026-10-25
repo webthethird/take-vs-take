@@ -156,6 +156,20 @@ describe("compare", () => {
     assert.deepEqual(await readdir(deps.outDir), [`compare-${r.value.comparison_id}`], "the stale run is gone; the new one stays");
   });
 
+  it("stops at a refused call, even in an optional step, and saves nothing partial", async () => {
+    // Billable calls in order: analyze, voice, draft (A), the same (B), then alignment.
+    for (const [refuseAt, frozen] of [[2, false], [7, true]] as const) {
+      const { deps } = await setup(happy);
+      let n = 0;
+      const llm = { ...deps.llm, beforeSpend: async () => (++n === refuseAt ? "limit reached" : null) };
+      const r = await compare({ ...deps, llm, persistReport: true }, postA, postB);
+      assert.ok(!r.ok && r.error === "rate_limited" && r.message === "limit reached", `call ${refuseAt}`);
+      const files = (await readdir(deps.outDir, { recursive: true })).filter((f) => f.endsWith(".json"));
+      assert.equal(files.some((f) => f.includes("report")), false, `call ${refuseAt}: no report`);
+      assert.equal(files.length > 0, frozen, `call ${refuseAt}: frozen runs only once both sides are complete`);
+    }
+  });
+
   it("runs the full pipeline: freeze first, then outcomes", async () => {
     const { deps, reads } = await setup(happy);
     const r = await compare(deps, postA, postB);

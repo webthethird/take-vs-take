@@ -268,3 +268,19 @@ describe("expiring cache entries", () => {
     assert.ok(again.ok && again.value.meta.cached);
   });
 });
+
+describe("beforeSpend", () => {
+  it("is asked before a billable call, refuses it without calling the model, and is never asked on a cache hit", async () => {
+    const t = scripted([{ parsed: { answer: "x" } }]);
+    const base = await config(t);
+    let asked = 0;
+    const refused = await structuredCall({ ...base, beforeSpend: async () => (asked++, "limit reached") }, spec);
+    assert.ok(!refused.ok && refused.error === "rate_limited" && refused.message === "limit reached");
+    assert.equal(t.requests.length, 0);
+    assert.ok((await structuredCall({ ...base, beforeSpend: async () => (asked++, null) }, spec)).ok);
+    assert.equal(t.requests.length, 1);
+    const hit = await structuredCall({ ...base, beforeSpend: async () => (asked++, "limit reached") }, spec);
+    assert.ok(hit.ok && hit.value.meta.cached);
+    assert.equal(asked, 2);
+  });
+});

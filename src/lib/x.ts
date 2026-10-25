@@ -149,6 +149,9 @@ export function xClient(opts: {
   sleep?: (ms: number) => Promise<void>;
   /// One JSON line per request sent, for auditing spend.
   logPath?: string;
+  /// Asked before each billable lookup (never for a cache hit). A message
+  /// refuses it: a public endpoint's per-visitor limit.
+  beforeRequest?: () => Promise<string | null>;
 }): XClient {
   const doFetch = opts.fetch ?? fetch;
   const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
@@ -161,6 +164,8 @@ export function xClient(opts: {
         const hit = await opts.cache.get(ids);
         if (hit) return { ok: true, value: hit };
       }
+      const refused = await opts.beforeRequest?.();
+      if (refused) return err("rate_limited", refused);
       const url = `${X_API}?ids=${[...ids].sort().join(",")}&${FIELDS}`;
       for (let attempt = 0; ; attempt++) {
         let res: Response;

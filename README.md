@@ -80,6 +80,15 @@ You need a [Tiingo](https://www.tiingo.com) token for prices and an
 `LLM_BUDGET_USD` caps model spend per process; results are cached, so reruns
 replay for free. A new pair has cost well under $1 in model calls so far.
 
+New comparisons from the web page are limited to 3 per visitor and 30 for
+all visitors combined in any 24 hours (`RUN_LIMIT_PER_VISITOR`,
+`RUN_LIMIT_TOTAL`). Only runs that make a paid request count, and the check
+happens just before that request, so a refused run has spent nothing and a
+fully cached replay is never refused. Set `VISITOR_IP_HEADER` to the
+client-address header your host sets (e.g. `x-real-ip`); until then every
+visitor shares one limit. A prompt change makes cached examples miss the
+cache, so rerun them before deploying, or the first visitors pay for them.
+
 **Posts.** A link resolves to a saved fixture if there is one, otherwise
 it's fetched from the X API when `X_BEARER_TOKEN` is set. A fetch looks up
 only the linked posts and the posts they quote or reply to (one level),

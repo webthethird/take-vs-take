@@ -181,6 +181,9 @@ export type LlmConfig = {
   /// be kept only 30 days from its fetch (see xExpiry). Unset, entries never
   /// expire.
   cacheExpiresAt?: Date;
+  /// Asked before each billable call (never for a cache hit). A message
+  /// refuses the call: a public endpoint's per-visitor limit.
+  beforeSpend?: () => Promise<string | null>;
 };
 
 export type CallSpec<S extends z.ZodType> = {
@@ -209,7 +212,7 @@ export type CallResult<T> = {
   };
 };
 
-export type LlmError = "budget_exceeded" | "refused" | "truncated" | "parse_failed" | "api_error";
+export type LlmError = "budget_exceeded" | "rate_limited" | "refused" | "truncated" | "parse_failed" | "api_error";
 
 type CacheEntry = { response: ModelResponse; created_at: string; model_requested: string; prompt_version: string; expires_at?: string };
 
@@ -307,6 +310,9 @@ export async function structuredCall<S extends z.ZodType>(
       `LLM budget $${cfg.budgetUsd.toFixed(2)}: $${spent.toFixed(4)} recorded, and this call could cost up to $${worst.toFixed(4)}.`,
     );
   }
+
+  const refused = await cfg.beforeSpend?.();
+  if (refused) return err("rate_limited", refused);
 
   let resp: ModelResponse;
   try {

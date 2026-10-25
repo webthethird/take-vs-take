@@ -28,9 +28,9 @@ export function realDeps(extra: Partial<CompareDeps> = {}): { deps: CompareDeps;
 
 /// Fetching posts from X, if X_BEARER_TOKEN is set; otherwise only saved
 /// fixtures resolve. Responses are cached under .cache/x for 30 days.
-export function xFromEnv(): FetchFromX | undefined {
+export function xFromEnv(beforeRequest?: () => Promise<string | null>): FetchFromX | undefined {
   const token = process.env.X_BEARER_TOKEN;
   if (!token) return undefined;
-  const client = xClient({ token, cache: new XCache(".cache/x"), logPath: ".cache/x-requests.jsonl" });
+  const client = xClient({ token, cache: new XCache(".cache/x"), logPath: ".cache/x-requests.jsonl", beforeRequest });
   return (ids) => fetchPosts(client, ids);
 }

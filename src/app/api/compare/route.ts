@@ -14,6 +14,9 @@
 //     ever reaches the model;
 //   - one run at a time, taken before any X fetch, so two requests can't
 //     both spend or both pass the budget check;
+//   - paid runs are limited per visitor and in total per day (limits.ts):
+//     the first billable request of a run charges it, so cached replays are
+//     always free and a refused run has spent nothing;
 //   - the LLM budget and Tiingo quota still apply inside compare().
 
 import { z } from "zod";
@@ -21,6 +24,7 @@ import type { CompareEvent, PostView } from "../../../lib/api.js";
 import type { PostInput } from "../../../lib/schema.js";
 import { compare } from "../../../lib/compare.js";
 import { realDeps, xFromEnv } from "../../../server/deps.js";
+import { RunLimiter, limitsFromEnv, refusalMessage, spendGate, visitorId } from "../../../server/limits.js";
 import { canonicalOrder, pinnedWindowEnd, resolvePosts } from "../../../server/posts.js";
 import { reportView } from "../../../server/view.js";
 
@@ -30,6 +34,7 @@ export const dynamic = "force-dynamic";
 const Body = z.object({ a: z.string().max(500), b: z.string().max(500), latest: z.boolean().optional() });
 
 let running = false;
+const limiter = new RunLimiter(".cache/run-limits.json", limitsFromEnv());
 
 const json = (status: number, e: Extract<CompareEvent, { type: "error" }>) => Response.json(e, { status });
 
@@ -53,15 +58,24 @@ export async function POST(req: Request): Promise<Response> {
     return json(status, e);
   };
 
+  const gate = spendGate(limiter, visitorId(req.headers, process.env.VISITOR_IP_HEADER));
   let a, b, swapped, pin, deps;
   try {
-    const posts = await resolvePosts(body.data.a, body.data.b, ".", xFromEnv());
+    const posts = await resolvePosts(body.data.a, body.data.b, ".", xFromEnv(gate.charge));
+    if (gate.refusal) {
+      running = false;
+      return Response.json({ type: "error", error: "rate_limited", message: refusalMessage(gate.refusal) } satisfies CompareEvent, {
+        status: 429,
+        headers: gate.refusal.retry_at ? { "retry-after": String(Math.max(1, Math.ceil((Date.parse(gate.refusal.retry_at) - Date.now()) / 1000))) } : {},
+      });
+    }
     if (!posts.ok) return fail(posts.error === "x_unavailable" ? 502 : 400, { type: "error", error: posts.error, message: posts.message, side: posts.side });
     // One order per pair, so swapped links replay the cached comparison.
     ({ posts: [a, b], swapped } = await canonicalOrder(posts.value[0], posts.value[1]));
     pin = body.data.latest ? { ok: true as const, value: null } : await pinnedWindowEnd(a.post_id, b.post_id);
     if (!pin.ok) return fail(500, { type: "error", error: "config", message: pin.message });
     deps = realDeps(pin.value ? { end: pin.value } : {});
+    deps.deps.llm = { ...deps.deps.llm, beforeSpend: gate.charge };
   } catch (e) {
     return fail(500, { type: "error", error: "config", message: (e as Error).message });
   }
@@ -71,7 +85,12 @@ export async function POST(req: Request): Promise<Response> {
       const send = (e: CompareEvent) => controller.enqueue(enc.encode(JSON.stringify(e) + "\n"));
       try {
         const r = await compare({ ...deps.deps, onStage: (stage) => send({ type: "stage", stage }) }, a, b);
-        if (r.ok) {
+        // A refused run is reported as such, even when compare() carried on
+        // without the refused step (alignment, drivers and fidelity are
+        // optional): a partial report would hide why it's partial.
+        if (gate.refusal) {
+          send({ type: "error", error: "rate_limited", message: refusalMessage(gate.refusal) });
+        } else if (r.ok) {
           const view = (p: PostInput): PostView => ({
             text: p.text,
             author_name: p.author_name ?? null,

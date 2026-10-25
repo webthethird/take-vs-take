@@ -147,6 +147,25 @@ describe("xClient", () => {
   });
 });
 
+describe("beforeRequest", () => {
+  it("refuses a lookup before sending it, and isn't asked for a cache hit", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tvt-x-"));
+    const cache = new XCache(dir);
+    const { fetch, calls } = respond([{ data: [] }]);
+    let allow = false;
+    let asked = 0;
+    const client = xClient({ token: "t", fetch, cache, sleep: noSleep, beforeRequest: async () => (asked++, allow ? null : "limit reached") });
+    const refused = await client.lookup([MAIN]);
+    assert.ok(!refused.ok && refused.error === "rate_limited" && refused.message === "limit reached");
+    assert.equal(calls.length, 0);
+    allow = true;
+    assert.ok((await client.lookup([MAIN])).ok);
+    allow = false;
+    assert.ok((await client.lookup([MAIN])).ok, "cached: no gate");
+    assert.deepEqual([calls.length, asked], [1, 2]);
+  });
+});
+
 describe("XCache", () => {
   it("serves a fresh entry, then stops serving and deletes it after 30 days", async () => {
     const dir = await mkdtemp(join(tmpdir(), "tvt-x-"));
