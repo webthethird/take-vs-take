@@ -22,7 +22,7 @@ deterministic rules, and the Milestone 1 build order. Anything marked
 | Weighting | LLM assigns a **conviction tier** per position, a **concentration style**, and a **cash level**; a deterministic rule produces weights. | Reproducible, auditable, less room for hindsight in weights. |
 | Ambiguity | No chat. Thesis stage emits 1–3 candidate interpretations as data; default is the broadest reading. Alternates are shown as labeled sensitivity, never as a swap after seeing returns. | Supertake's "Build it now" picked the broadest reading in both observed cases. The post author is not present to answer questions. |
 | Relationship | Three separate dimensions: **thesis alignment** (about the opinions), **portfolio co-movement** (raw ex-ante return correlation primary; residual ρ and β secondary), **holdings overlap** (a fact). They need not agree; mismatches are findings. No verbal strength labels; a direction is stated only when the 95% interval excludes zero. | §5. Revised 2026-10-19 after the first real-data result. |
-| Time gap | Any gap allowed; flag a carried-forward thesis when posts are > 30 days apart; refuse a common window < 20 trading days. | |
+| Time gap | Any gap allowed; flag a carried-forward thesis when posts are > 30 days apart; with a common window < 20 trading days, report everything that needs no outcome prices (readings, overlap, co-movement before the posts) and hold back returns until it reaches 20. | |
 | Cash return | 0%. T-bill exposure, when wanted, is an explicit holding (e.g. SGOV). | Cash = uninvested brokerage balance. |
 
 ## 2. Pipeline

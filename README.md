@@ -53,6 +53,8 @@ post B ─▶ analyze ─▶ draft ─▶ weight ─┘                    │
   carried forward from an older post is flagged. Example pairs run through a
   pinned end date (`window_end` in `fixtures/candidates.md`), so their
   numbers don't change between runs; the page can rerun one through today.
+  Returns need at least 20 trading days after entry. For more recent posts
+  the page shows everything else and says when to rerun for returns.
 - **Co-movement.** Daily-return correlation over the year *before* the posts
   (raw, and beyond market exposure), with a 95% interval. A direction is
   stated only when the interval excludes zero.

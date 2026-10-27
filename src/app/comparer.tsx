@@ -184,6 +184,20 @@ function Report({ report, posts }: { report: ReportView; posts: { A: PostView; B
 
       <Comparison report={report} />
 
+      {report.returns_pending && (
+        <section>
+          <h2>Hypothetical performance</h2>
+          <p>
+            Not yet: returns are shown once {report.returns_pending.needed} trading days have passed since entry
+            {report.returns_pending.entry
+              ? ` (the close on ${report.returns_pending.entry}; ${report.returns_pending.trading_days} so far)`
+              : " (the close on the first trading day after the later post, which hasn't happened yet)"}
+            . Rerun this comparison on or after {report.returns_pending.earliest} to see them.
+          </p>
+          <p className="muted small">Over a few days, returns mostly show day-to-day noise, so none are shown.</p>
+        </section>
+      )}
+
       {bt && report.window && (
         <section>
           <h2>Hypothetical performance</h2>
@@ -323,6 +337,14 @@ function Summary({ report }: { report: ReportView }) {
             <dd>
               {words(cm.ex_ante_direction)}
               {cm.ex_ante?.raw != null && <span className="muted"> ({cm.ex_ante.raw.toFixed(2)})</span>}
+            </dd>
+          </div>
+        )}
+        {report.returns_pending && (
+          <div>
+            <dt>Return</dt>
+            <dd className="muted">
+              pending ({report.returns_pending.trading_days} of {report.returns_pending.needed} trading days)
             </dd>
           </div>
         )}

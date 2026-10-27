@@ -5,6 +5,7 @@ import {
   backtest,
   benchmarkBacktest,
   commonWindow,
+  returnsPending,
   metrics,
   rawTotalReturn,
   type Holding,
@@ -260,6 +261,16 @@ describe("commonWindow", () => {
     const r = commonWindow({ createdA: pre, createdB: pre, benchmark: bench, end: days[19] });
     assert.equal(r.ok, false);
     if (!r.ok) assert.equal(r.error, "window_too_short");
+  });
+
+  it("returnsPending: null once the window is long enough, else counts days and a weekday lower bound", () => {
+    const pre = "2026-02-27T21:00:00Z"; // Fri 16:00 ET; entry is days[0]
+    assert.equal(returnsPending({ createdA: pre, createdB: pre, benchmark: bench, end: days[20] }), null);
+    const p = returnsPending({ createdA: pre, createdB: pre, benchmark: bench, end: days[19] });
+    assert.deepEqual(p, { entry: days[0], trading_days: 19, needed: MIN_WINDOW_DAYS, earliest: days[20] });
+    // No entry day yet: entry plus 20 more sessions, from the cutoff's date.
+    const none = returnsPending({ createdA: "2026-12-01T00:00:00Z", createdB: "2026-01-01T00:00:00Z", benchmark: bench });
+    assert.deepEqual(none, { entry: null, trading_days: 0, needed: MIN_WINDOW_DAYS, earliest: "2026-12-29" });
   });
 
   it("no trading day after the cutoff -> no_entry_day", () => {

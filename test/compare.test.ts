@@ -323,6 +323,34 @@ describe("compare", () => {
     assert.equal(t.requests.length, 5); // no draft, drivers or fidelity call for B
   });
 
+  it("a window too short for returns still reports everything that needs no outcome prices", async () => {
+    // Entry 2026-07-17; through 07-24 that's 5 trading days after entry.
+    const { deps } = await setup(happy);
+    const r = await compare({ ...deps, end: "2026-07-24" }, postA, postB);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    if (!r.ok) return;
+    const rep = r.value;
+    assert.deepEqual(rep.returns_pending, { entry: "2026-07-17", trading_days: 5, needed: 20, earliest: "2026-08-14" });
+    assert.equal(rep.window, null);
+    assert.equal(rep.backtests, null);
+    assert.equal(rep.co_movement!.realized, null);
+    assert.ok(rep.alignment && rep.drivers && rep.fidelity.A && rep.fidelity.B);
+    assert.ok(rep.holdings_overlap && rep.co_movement!.ex_ante?.raw != null);
+    assert.ok(rep.sensitivity!.readings.every((x) => x.metrics === null));
+    assert.ok(rep.findings.length > 0);
+    assert.ok(rep.caveats.some((c) => c.startsWith("Returns aren't shown until the window has 20 trading days (5 of 20")));
+    assert.ok(!rep.caveats.some((c) => c.startsWith("Results run through")));
+  });
+
+  it("before the first trading day after the posts, returns are pending with no entry", async () => {
+    const { deps } = await setup(happy);
+    const r = await compare({ ...deps, end: "2026-07-16" }, postA, postB);
+    assert.ok(r.ok, !r.ok ? r.message : "");
+    if (!r.ok) return;
+    assert.deepEqual(r.value.returns_pending, { entry: null, trading_days: 0, needed: 20, earliest: "2026-08-14" });
+    assert.ok(r.value.holdings_overlap && r.value.co_movement!.ex_ante);
+  });
+
   it("is order-independent: swapping A and B swaps the sides, same portfolios", async () => {
     const x = await setup(happy);
     const y = await setup([happy[2], happy[3], happy[0], happy[1], happy[4]]);

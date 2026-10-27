@@ -106,13 +106,41 @@ export type WindowResult = Window & {
   gapDays: number;
 };
 
-export function commonWindow(w: WindowInput): Result<WindowResult, "no_entry_day" | "window_too_short"> {
-  const a = Date.parse(w.createdA);
-  const b = Date.parse(w.createdB);
-  const cutoff = new Date(Math.max(a, b));
+function windowDays(w: WindowInput) {
+  const cutoff = new Date(Math.max(Date.parse(w.createdA), Date.parse(w.createdB)));
   const cutoffDay = etDate(cutoff);
   const end = w.end ?? w.benchmark.at(-1)?.date;
   const calendar = w.benchmark.map((x) => x.date).filter((d) => d > cutoffDay && end !== undefined && d <= end);
+  return { cutoff, cutoffDay, end, calendar };
+}
+
+/// Days between the posts, and whether the older thesis is carried forward.
+export function postGap(createdA: string, createdB: string): { gapDays: number; carriedForward: boolean } {
+  const gapDays = Math.abs(Date.parse(createdA) - Date.parse(createdB)) / 86_400_000;
+  return { gapDays, carriedForward: gapDays > CARRIED_FORWARD_DAYS };
+}
+
+/// Returns not shown yet: the window has fewer than MIN_WINDOW_DAYS trading
+/// days after entry. earliest is a lower bound counted in weekdays; market
+/// holidays and data lag only push it later.
+export type ReturnsPending = { entry: string | null; trading_days: number; needed: number; earliest: string };
+
+export function returnsPending(w: WindowInput): ReturnsPending | null {
+  const { cutoffDay, calendar } = windowDays(w);
+  const tradingDays = Math.max(0, calendar.length - 1);
+  if (calendar.length > 0 && tradingDays >= MIN_WINDOW_DAYS) return null;
+  // Without an entry day yet, the entry itself is one more session to wait for.
+  let remaining = calendar.length === 0 ? MIN_WINDOW_DAYS + 1 : MIN_WINDOW_DAYS - tradingDays;
+  const d = new Date(`${calendar.at(-1) ?? cutoffDay}T12:00:00Z`);
+  while (remaining > 0) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    if (d.getUTCDay() % 6 !== 0) remaining--;
+  }
+  return { entry: calendar[0] ?? null, trading_days: tradingDays, needed: MIN_WINDOW_DAYS, earliest: d.toISOString().slice(0, 10) };
+}
+
+export function commonWindow(w: WindowInput): Result<WindowResult, "no_entry_day" | "window_too_short"> {
+  const { cutoff, cutoffDay, end, calendar } = windowDays(w);
   const entry = calendar[0];
   if (entry === undefined || end === undefined) {
     return err("no_entry_day", `No trading day after ${cutoffDay} (the cutoff's ET date) through ${end ?? "the data's end"}.`);
@@ -125,17 +153,9 @@ export function commonWindow(w: WindowInput): Result<WindowResult, "no_entry_day
       `Common window ${entry}..${calendar.at(-1)} has ${tradingDays} trading days after entry; at least ${MIN_WINDOW_DAYS} are required.`,
     );
   }
-  const gapDays = Math.abs(a - b) / 86_400_000;
   return {
     ok: true,
-    value: {
-      cutoff: cutoff.toISOString(),
-      entry,
-      end: calendar.at(-1)!,
-      calendar,
-      carriedForward: gapDays > CARRIED_FORWARD_DAYS,
-      gapDays,
-    },
+    value: { cutoff: cutoff.toISOString(), entry, end: calendar.at(-1)!, calendar, ...postGap(w.createdA, w.createdB) },
   };
 }
 

@@ -17,7 +17,10 @@ import {
   backtest,
   benchmarkBacktest,
   commonWindow,
+  postGap,
+  returnsPending,
   type BacktestResult,
+  type ReturnsPending,
   type WindowResult,
 } from "./backtest.js";
 import { toThesisInput } from "./fixture.js";
@@ -275,6 +278,9 @@ export type ComparisonReport = {
   /// portfolio or whose labels were unavailable.
   fidelity: { A: FidelityResult | null; B: FidelityResult | null };
   window: WindowResult | null;
+  /// Set when the window is too short for returns: everything that needs no
+  /// outcome prices is still reported. Absent in reports saved before it.
+  returns_pending?: ReturnsPending | null;
   /// Labels the reader must see next to any result.
   caveats: string[];
   backtests: { a: BacktestResult; b: BacktestResult; benchmark: BacktestResult } | null;
@@ -295,7 +301,7 @@ export type ComparisonReport = {
 /// rate_limited: a billable call was refused (CompareDeps.llm.beforeSpend).
 /// It stops the run even in an optional step, so a refused run never
 /// freezes or saves a result missing the refused part.
-export type CompareError = "analysis_failed" | "draft_failed" | "price_error" | "window_error" | "freeze_error" | "rate_limited";
+export type CompareError = "analysis_failed" | "draft_failed" | "price_error" | "freeze_error" | "rate_limited";
 
 export type CompareDeps = {
   llm: LlmConfig;
@@ -571,14 +577,25 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
   }
   const bench = series[0]!;
 
-  const w = commonWindow({ createdA: postA.created_at, createdB: postB.created_at, benchmark: bench.bars });
-  if (!w.ok) return err("window_error", w.message);
-  report.window = w.value;
-  if (deps.end) {
-    caveats.push(`Results run through ${w.value.end}, the end date fixed for this pair so that rerunning it gives the same numbers. Later prices aren't included.`);
+  // Too short a window for returns (or no trading day after the posts yet)
+  // still leaves everything that doesn't need outcome prices: overlap,
+  // co-movement before the posts, and the readings above.
+  const windowInput = { createdA: postA.created_at, createdB: postB.created_at, benchmark: bench.bars };
+  const pending = returnsPending(windowInput);
+  const w = pending ? null : commonWindow(windowInput);
+  if (w && !w.ok) return err("price_error", w.message);
+  const win = w?.ok ? w.value : null;
+  report.window = win;
+  report.returns_pending = pending;
+  if (pending) {
+    const sofar = pending.entry ? `${pending.trading_days} of ${pending.needed} trading days since entry on ${pending.entry}` : "no trading day after the later post yet";
+    caveats.push(`Returns aren't shown until the window has ${pending.needed} trading days (${sofar}); rerun on or after ${pending.earliest}. Fewer days would mostly show noise.`);
+  } else if (deps.end) {
+    caveats.push(`Results run through ${win!.end}, the end date fixed for this pair so that rerunning it gives the same numbers. Later prices aren't included.`);
   }
-  if (w.value.carriedForward) {
-    caveats.push(`The posts are ${Math.round(w.value.gapDays)} days apart. The earlier thesis is evaluated as of the later post's date; its author made no new call then.`);
+  const gap = postGap(postA.created_at, postB.created_at);
+  if (gap.carriedForward) {
+    caveats.push(`The posts are ${Math.round(gap.gapDays)} days apart. The earlier thesis is evaluated as of the later post's date; its author made no new call then.`);
   }
   const earliest = etDate(new Date(Math.min(Date.parse(postA.created_at), Date.parse(postB.created_at))));
   if (earliest <= MODEL_TRAINING_CUTOFF) {
@@ -587,31 +604,34 @@ export async function compare(deps: CompareDeps, postA: PostInput, postB: PostIn
     caveats.push(`Both posts postdate the interpretation model's training cutoff (${MODEL_TRAINING_CUTOFF}), so the model could not have learned the outcome window during training.`);
   }
 
-  deps.onStage?.({ stage: "backtest" });
   const side = (p: Portfolio) => ({ holdings: p.positions.map((x) => ({ ticker: x.ticker, weight: x.weight })), cashWeight: p.cash_weight });
-  const bt = (p: Portfolio) => backtest({ ...side(p), prices: series, window: w.value });
-  const ba = bt(pa);
-  const bb = bt(pb);
-  const bm = benchmarkBacktest(bench, w.value);
-  if (!ba.ok) return err("price_error", `Backtest A: ${ba.message}`);
-  if (!bb.ok) return err("price_error", `Backtest B: ${bb.message}`);
-  if (!bm.ok) return err("price_error", `Benchmark: ${bm.message}`);
-  report.backtests = { a: ba.value, b: bb.value, benchmark: bm.value };
-  for (const [label, r] of [["A", ba.value], ["B", bb.value]] as const) {
-    for (const f of r.flags) caveats.push(`Portfolio ${label} data flag: ${JSON.stringify(f)}`);
+  let re: ReturnType<typeof realizedCorrelation> | null = null;
+  if (win) {
+    deps.onStage?.({ stage: "backtest" });
+    const bt = (p: Portfolio) => backtest({ ...side(p), prices: series, window: win });
+    const ba = bt(pa);
+    const bb = bt(pb);
+    const bm = benchmarkBacktest(bench, win);
+    if (!ba.ok) return err("price_error", `Backtest A: ${ba.message}`);
+    if (!bb.ok) return err("price_error", `Backtest B: ${bb.message}`);
+    if (!bm.ok) return err("price_error", `Benchmark: ${bm.message}`);
+    report.backtests = { a: ba.value, b: bb.value, benchmark: bm.value };
+    for (const [label, r] of [["A", ba.value], ["B", bb.value]] as const) {
+      for (const f of r.flags) caveats.push(`Portfolio ${label} data flag: ${JSON.stringify(f)}`);
+    }
+    re = realizedCorrelation(ba.value, bb.value, bm.value);
   }
 
   report.holdings_overlap = holdingsOverlap(side(pa), side(pb));
   const ex = exAnteCorrelation({ a: side(pa), b: side(pb), prices: series, benchmark: bench, cutoff: cutoff.toISOString() });
-  const re = realizedCorrelation(ba.value, bb.value, bm.value);
   report.co_movement = {
     ex_ante: ex.ok ? ex.value : null,
     ex_ante_error: ex.ok ? null : ex.message,
     ex_ante_direction: ex.ok && ex.value.rawCi95 ? coMovementDirection(ex.value.rawCi95) : null,
-    realized: re.ok ? re.value : null,
-    realized_direction: re.ok && re.value.rawCi95 ? coMovementDirection(re.value.rawCi95) : null,
+    realized: re?.ok ? re.value : null,
+    realized_direction: re?.ok && re.value.rawCi95 ? coMovementDirection(re.value.rawCi95) : null,
   };
-  report.sensitivity = sensitivity(fa, fb, series, bench, w.value, cutoff.toISOString());
+  report.sensitivity = sensitivity(fa, fb, series, bench, win, cutoff.toISOString());
   report.findings = findings(report);
   // Everything from step 3 on is derived from prices, so it's saved only
   // when the plan allows (see persistReport). The frozen runs contain no
@@ -644,13 +664,14 @@ function readingsOf(f: FrozenRun): { id: string; portfolio: Portfolio }[] {
   return out;
 }
 
-export function sensitivity(fa: FrozenRun, fb: FrozenRun, series: PriceSeries[], bench: PriceSeries, window: WindowResult, cutoff: string): NonNullable<ComparisonReport["sensitivity"]> {
+/// window null: returns are pending, so each reading's metrics are null.
+export function sensitivity(fa: FrozenRun, fb: FrozenRun, series: PriceSeries[], bench: PriceSeries, window: WindowResult | null, cutoff: string): NonNullable<ComparisonReport["sensitivity"]> {
   const side = (p: Portfolio) => ({ holdings: p.positions.map((x) => ({ ticker: x.ticker, weight: x.weight })), cashWeight: p.cash_weight });
   const readings: ReadingResult[] = [];
   for (const f of [fa, fb]) {
     for (const r of readingsOf(f)) {
       const i = f.analysis.interpretations.find((x) => x.id === r.id)!;
-      const b = backtest({ ...side(r.portfolio), prices: series, window });
+      const b = window ? backtest({ ...side(r.portfolio), prices: series, window }) : null;
       readings.push({
         side: f.label,
         interpretation_id: r.id,
@@ -658,8 +679,8 @@ export function sensitivity(fa: FrozenRun, fb: FrozenRun, series: PriceSeries[],
         is_default: r.id === f.analysis.default_interpretation,
         author_stated: authorNamed(f.analysis, i, f.voice),
         stance_conflicts: stanceConflicts(f.analysis, r.portfolio),
-        metrics: b.ok ? b.value.metrics : null,
-        error: b.ok ? null : `${b.error}: ${b.message}`,
+        metrics: b?.ok ? b.value.metrics : null,
+        error: !b ? "returns pending: window too short" : b.ok ? null : `${b.error}: ${b.message}`,
       });
     }
   }
