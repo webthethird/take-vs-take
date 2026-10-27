@@ -20,6 +20,8 @@ export type PostView = {
   text: string;
   author_name: string | null;
   text_verified: boolean;
+  /// When the post was fetched from X; null for a saved fixture.
+  fetched_at: string | null;
   context: { kind: "parent" | "quoted"; text: string }[];
   shown: { images: number; video_previews: number; links: number; unavailable: ("parent" | "quoted")[] };
 };

@@ -141,6 +141,7 @@ export function Comparer({ pairs }: { pairs: DemoPair[] }) {
             </button>
           </p>
         )}
+        {result && !busy && fetchedNote(result.posts) && <p className="pinned">{fetchedNote(result.posts)}</p>}
         {(busy || (stages.length > 0 && !result)) && (
           <ol className="stages">
             {STAGES.filter((s) => stages.includes(s.key) || busy).map((s) => {
@@ -385,6 +386,15 @@ function FidelityLine({ f, voice }: { f: FidelityResult | null; voice: Voice }) 
 }
 
 /// "The model also saw 2 images and a video's preview frame; 1 link was not opened."
+/// X content, and the AI readings that quote it, are kept 30 days, so a
+/// rerun after that can draft different portfolios. Said, not hidden.
+function fetchedNote(posts: { A: PostView; B: PostView }): string | null {
+  const at = [posts.A.fetched_at, posts.B.fetched_at].filter((t): t is string => t !== null).sort()[0];
+  if (!at) return null;
+  const day = new Date(at).toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" });
+  return `Posts fetched from X on ${day}. Fetched posts and the AI's readings of them are kept for 30 days, then fetched and read again, so the portfolios can differ from one month to the next.`;
+}
+
 function shownNote(s: PostView["shown"]): string | null {
   const n = (k: number, one: string, many: string) => (k === 1 ? one : `${k} ${many}`);
   const saw = [

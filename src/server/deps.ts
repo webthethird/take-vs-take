@@ -34,3 +34,9 @@ export function xFromEnv(beforeRequest?: () => Promise<string | null>): FetchFro
   const client = xClient({ token, cache: new XCache(".cache/x"), logPath: ".cache/x-requests.jsonl", beforeRequest });
   return (ids) => fetchPosts(client, ids);
 }
+
+/// POST_SOURCE=x: every post, examples included, is fetched from X (needs
+/// X_BEARER_TOKEN). Otherwise (the default) saved fixtures win.
+export function preferXFromEnv(): boolean {
+  return process.env.POST_SOURCE === "x" && Boolean(process.env.X_BEARER_TOKEN);
+}

@@ -56,9 +56,11 @@ export async function readCandidates(root = "."): Promise<DemoPair[]> {
   return out;
 }
 
-/// Pairs from the pre-registered candidates file whose posts are saved
-/// locally. Labels are the developer's, written before any analysis.
-export async function listDemoPairs(root = "."): Promise<DemoPair[]> {
+/// Pairs from the pre-registered candidates file whose posts can be
+/// resolved: every pair when posts can be fetched from X, otherwise those
+/// saved locally. Labels are the developer's, written before any analysis.
+export async function listDemoPairs(root = ".", opts: { fromX?: boolean } = {}): Promise<DemoPair[]> {
+  if (opts.fromX) return readCandidates(root);
   let files: string[];
   try {
     files = await readdir(join(root, FIXTURE_DIR));
@@ -115,18 +117,23 @@ export type ResolveError = "invalid_url" | "same_post" | "not_available" | "not_
 export type FetchFromX = (ids: string[]) => Promise<Result<PostInput[], XError> & { index?: number }>;
 
 /// A saved fixture wins (free, and its results are pinned); any other post
-/// is fetched from X when fetching is enabled.
+/// is fetched from X when fetching is enabled. With `preferX`, fixtures are
+/// ignored and every post comes from X, so a deployment and a local run of
+/// the same examples see the same posts (with their images and context,
+/// which hand-saved fixtures lack).
 export async function resolvePosts(
   a: string,
   b: string,
   root = ".",
   fetchFromX?: FetchFromX,
+  opts: { preferX?: boolean } = {},
 ): Promise<Result<[PostInput, PostInput], ResolveError> & { side?: "a" | "b" | "both" }> {
   const pair = parsePostUrlPair(a, b);
   if (!pair.ok) return { ...err(pair.error === "same_post" ? "same_post" : "invalid_url", pair.message), side: pair.side };
 
   const byId = new Map<string, PostInput>();
-  for (const f of await readdir(join(root, FIXTURE_DIR)).catch(() => [] as string[])) {
+  const fixtures = opts.preferX && fetchFromX ? [] : await readdir(join(root, FIXTURE_DIR)).catch(() => [] as string[]);
+  for (const f of fixtures) {
     if (!f.endsWith(".json")) continue;
     try {
       const p = fixtureToPostInput(JSON.parse(await readFile(join(root, FIXTURE_DIR, f), "utf8")));

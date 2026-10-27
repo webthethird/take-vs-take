@@ -15,7 +15,8 @@
     "interpret": "tsx src/cli/interpret.ts",
     "compare": "tsx src/cli/compare.ts",
     "consistency": "tsx src/cli/consistency.ts",
-    "ci-check": "tsx src/cli/ci-check.ts"
+    "ci-check": "tsx src/cli/ci-check.ts",
+    "warm": "tsx src/cli/warm.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",

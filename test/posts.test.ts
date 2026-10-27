@@ -68,6 +68,15 @@ describe("listDemoPairs", () => {
     const pairs = await listDemoPairs(d);
     assert.deepEqual(pairs.map((p) => [p.id, p.window_end]), [["pair-01", "2026-10-21"]]);
   });
+
+  it("lists every pair when posts can be fetched from X, saved or not", async () => {
+    const d = await root([
+      { id: "pair-01", a: A, b: B },
+      { id: "posthoc-01", a: A, b: C },
+    ]);
+    assert.deepEqual((await listDemoPairs(d, { fromX: true })).map((p) => p.id), ["pair-01", "posthoc-01"]);
+    assert.deepEqual(await listDemoPairs(d), []);
+  });
 });
 
 describe("canonicalOrder", () => {
@@ -109,6 +118,23 @@ describe("resolvePosts", () => {
     assert.ok(r.ok);
     assert.deepEqual(asked, [[B]]);
     if (r.ok) assert.deepEqual(r.value.map((p) => p.provenance.source), ["fixture_manual", "x_api"]);
+  });
+
+  it("with preferX, ignores saved fixtures and fetches both posts", async () => {
+    const d = await root([]);
+    await writeFile(join(d, "fixtures/private/one.json"), JSON.stringify(fixture(A)));
+    const asked: string[][] = [];
+    const fetchFromX: FetchFromX = async (ids) => {
+      asked.push(ids);
+      return { ok: true, value: ids.map(fetched) };
+    };
+    const r = await resolvePosts(`https://x.com/u/status/${A}`, `https://x.com/u/status/${B}`, d, fetchFromX, { preferX: true });
+    assert.ok(r.ok);
+    assert.deepEqual(asked, [[A, B]]);
+    // Without a way to fetch, preferX can't apply: the fixture still serves.
+    const offline = await resolvePosts(`https://x.com/u/status/${A}`, `https://x.com/u/status/${B}`, d, undefined, { preferX: true });
+    assert.equal(!offline.ok && offline.error, "not_available");
+    if (!offline.ok) assert.equal(offline.side, "b");
   });
 
   it("without X fetching, a post that isn't saved is unavailable", async () => {

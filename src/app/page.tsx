@@ -7,7 +7,7 @@ import { Comparer } from "./comparer.js";
 export const dynamic = "force-dynamic";
 
 export default async function Page() {
-  const pairs = await listDemoPairs();
+  const pairs = await listDemoPairs(".", { fromX: Boolean(process.env.X_BEARER_TOKEN) });
   return (
     <main>
       <header className="masthead">

@@ -23,7 +23,7 @@ import { z } from "zod";
 import type { CompareEvent, PostView } from "../../../lib/api.js";
 import type { PostInput } from "../../../lib/schema.js";
 import { compare } from "../../../lib/compare.js";
-import { realDeps, xFromEnv } from "../../../server/deps.js";
+import { preferXFromEnv, realDeps, xFromEnv } from "../../../server/deps.js";
 import { RunLimiter, limitsFromEnv, refusalMessage, spendGate, visitorId } from "../../../server/limits.js";
 import { canonicalOrder, pinnedWindowEnd, resolvePosts } from "../../../server/posts.js";
 import { reportView } from "../../../server/view.js";
@@ -61,7 +61,7 @@ export async function POST(req: Request): Promise<Response> {
   const gate = spendGate(limiter, visitorId(req.headers, process.env.VISITOR_IP_HEADER));
   let a, b, swapped, pin, deps;
   try {
-    const posts = await resolvePosts(body.data.a, body.data.b, ".", xFromEnv(gate.charge));
+    const posts = await resolvePosts(body.data.a, body.data.b, ".", xFromEnv(gate.charge), { preferX: preferXFromEnv() });
     if (gate.refusal) {
       running = false;
       return Response.json({ type: "error", error: "rate_limited", message: refusalMessage(gate.refusal) } satisfies CompareEvent, {
@@ -95,6 +95,7 @@ export async function POST(req: Request): Promise<Response> {
             text: p.text,
             author_name: p.author_name ?? null,
             text_verified: p.provenance.text_verified,
+            fetched_at: p.provenance.source === "x_api" ? p.provenance.retrieved_at : null,
             context: p.context.map((c) => ({ kind: c.kind, text: c.text })),
             shown: {
               images: p.media.filter((m) => m.kind === "photo").length,
